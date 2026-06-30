@@ -5,6 +5,7 @@ This tool automates the creation of IntuneWin packages from web-based applicatio
 ## Features
 
 - ✅ Interactive input dialog for website URL and application details
+- ✅ Download location support (URL, local installer file, or local download folder)
 - ✅ Automatic download link discovery from websites
 - ✅ Registry-based detection script (no external dependencies)
 - ✅ Automatic uninstall script generation
@@ -12,6 +13,8 @@ This tool automates the creation of IntuneWin packages from web-based applicatio
 - ✅ Complete metadata file generation (app.json, win32LobApp.json)
 - ✅ Automatic version detection from website
 - ✅ Smart installer type detection (EXE, MSI, MSIX, APPX)
+- ✅ Silent switch intelligence engine (known profiles + web research + installer help probing)
+- ✅ Windows 11 style WPF launcher UI (`AppGetter.UI.ps1`)
 - ✅ Icon file handling
 - ✅ Proper installer filename handling
 - ✅ Version included in readme.txt
@@ -32,6 +35,19 @@ Simply run the script without parameters to open input dialogs:
 .\Create-IntuneWinFromWeb.ps1
 ```
 
+### Windows 11 Style UI Launcher
+
+Run the GUI frontend for easier operation:
+
+```powershell
+.\AppGetter.UI.ps1
+```
+
+The UI is tied directly to the backend script and supports:
+- Download location input (URL / file / folder)
+- Silent switch analysis for downloaded/uploaded installers
+- One-click package generation with live log output
+
 Dialog boxes will appear prompting you to enter:
 - Website URL (e.g., "https://simion.com/")
 - Application Name (e.g., "SIMION")
@@ -48,6 +64,16 @@ Dialog boxes will appear prompting you to enter:
 
 ```powershell
 .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/installer.exe" -AppName "MyApp" -Version "1.0.0"
+```
+
+#### With Download Location (local folder or file)
+
+```powershell
+.\Create-IntuneWinFromWeb.ps1 -DownloadLocation "C:\Users\Me\Downloads" -AppName "MyApp"
+```
+
+```powershell
+.\Create-IntuneWinFromWeb.ps1 -InstallerPath "C:\Users\Me\Downloads\setup.exe" -AppName "MyApp"
 ```
 
 #### With Specific Version
@@ -83,6 +109,15 @@ Dialog boxes will appear prompting you to enter:
 - **DownloadUrl** (Optional): Direct download URL if known
   - If provided, script will skip website scanning and download directly
   - Example: `"https://example.com/installer.exe"`
+
+- **DownloadLocation** (Optional): Generic source location provided by user
+  - Supports web URLs, local installer file paths, or local folders
+  - Local folders are scanned for the newest `.exe`, `.msi`, `.msix`, or `.appx`
+  - Example: `"C:\Installers"`, `"https://example.com/setup.exe"`
+
+- **InstallerPath** (Optional): Local installer path (for user-uploaded/downloader files)
+  - If provided, download step is skipped and file is copied into package directory
+  - Example: `"C:\Downloads\app-setup.exe"`
   
 - **AppName** (Optional): The name of the application
   - If not provided, an input dialog will appear
@@ -108,10 +143,13 @@ Dialog boxes will appear prompting you to enter:
     - MSIX/APPX: `Add-AppxPackage -Path "installer.msix"`
     - EXE: `"installer.exe" /S`
 
+- **DeveloperUrl** (Optional): Publisher/developer URL to enrich metadata and switch research
+- **SupportUrl** (Optional): Support docs URL to research known installation switches
+
 ## What the Script Does
 
-1. **Finds Download Links** - Scans the website for download links (if WebsiteUrl provided)
-2. **Downloads** the installer with proper filename
+1. **Resolves Installer Source** - Uses `InstallerPath`, `DownloadLocation`, `DownloadUrl`, or website discovery
+2. **Downloads/Copies** the installer into package folder
 3. **Detects Version** - Attempts to extract version information from website
 4. **Creates detection.ps1** - Registry-based detection script
 5. **Creates uninstall.ps1** - Uninstall script that finds and executes the uninstaller
@@ -120,7 +158,8 @@ Dialog boxes will appear prompting you to enter:
    - `readme.txt` - Documentation
    - `app.json` - Application metadata
    - `win32LobApp.json` - Intune app definition with detection script
-8. **Packages with Content Prep Tool** - Creates the final `.intunewin` file
+8. **Analyzes Silent Switches** - Uses known profiles, documentation research, and installer help probing
+9. **Packages with Content Prep Tool** - Creates the final `.intunewin` file
 
 ## Output Structure
 

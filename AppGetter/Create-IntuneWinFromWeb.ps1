@@ -38,6 +38,12 @@ param(
     
     [Parameter(Mandatory=$false)]
     [string]$DownloadUrl,
+
+    [Parameter(Mandatory=$false)]
+    [string]$DownloadLocation,
+
+    [Parameter(Mandatory=$false)]
+    [string]$InstallerPath,
     
     [Parameter(Mandatory=$false)]
     [string]$AppName,
@@ -47,6 +53,12 @@ param(
     
     [Parameter(Mandatory=$false)]
     [string]$Publisher,
+
+    [Parameter(Mandatory=$false)]
+    [string]$DeveloperUrl,
+
+    [Parameter(Mandatory=$false)]
+    [string]$SupportUrl,
     
     [Parameter(Mandatory=$false)]
     [string]$OutputPath = "D:\Intoon In Progress",
@@ -60,6 +72,16 @@ param(
 
 # Error handling
 $ErrorActionPreference = "Stop"
+
+# Import backend module for installer analysis and download location support
+$backendModulePath = Join-Path $PSScriptRoot "AppGetter.Backend.psm1"
+if (Test-Path -LiteralPath $backendModulePath) {
+    Import-Module $backendModulePath -Force
+} else {
+    Write-Host "Warning: Backend module not found at $backendModulePath. Falling back to built-in logic." -ForegroundColor Yellow
+}
+
+$inputInstallerPath = $InstallerPath
 
 # Function to show input dialog
 function Get-InputFromDialog {
@@ -456,51 +478,75 @@ function Start-WebDownloadWithProgress {
     return $false
 }
 
-# Prompt for required information if not provided
-if ([string]::IsNullOrWhiteSpace($WebsiteUrl) -and [string]::IsNullOrWhiteSpace($DownloadUrl)) {
-    Write-Host "Website URL or Download URL not provided. Opening input dialog..." -ForegroundColor Cyan
-    
-    # First, ask if user has a direct download URL
-    $hasDirectUrl = Get-InputFromDialog -Title "AppGetter - Download Source" -Prompt "Do you have a direct download URL?`n`nEnter:`n  - 'yes' or 'y' if you have a direct download link`n  - 'no' or 'n' to search a website for download links`n  - Or leave blank to search a website"
-    
-    if ($hasDirectUrl -and ($hasDirectUrl -match "^(yes|y)$" -or $hasDirectUrl -match "^y")) {
-        # User has direct download URL
-        $DownloadUrl = Get-InputFromDialog -Title "AppGetter - Enter Download URL" -Prompt "Enter the direct download URL:`n`nExample: https://example.com/installer.exe`n`nOr: https://simion.com/downloads/simion-8.2.1.3.exe"
-        
-        if ([string]::IsNullOrWhiteSpace($DownloadUrl)) {
-            Write-Error "Download URL is required. Exiting."
-            exit 1
+$downloadLocationResolution = $null
+if (-not [string]::IsNullOrWhiteSpace($DownloadLocation) -and [string]::IsNullOrWhiteSpace($inputInstallerPath) -and [string]::IsNullOrWhiteSpace($DownloadUrl)) {
+    try {
+        $downloadLocationResolution = Resolve-AppGetterDownloadLocation -DownloadLocation $DownloadLocation
+        if ($downloadLocationResolution.DownloadUrl) {
+            $DownloadUrl = $downloadLocationResolution.DownloadUrl
         }
-        
-        Write-Success "Using direct download URL: $DownloadUrl"
-        
-        # Prompt for developer/support pages after download URL
-        Write-Host "`nGathering additional information..." -ForegroundColor Cyan
-        
-        # Get developer/publisher page
-        $DeveloperUrl = Get-InputFromDialog -Title "AppGetter - Developer/Publisher Page" -Prompt "Enter the developer or publisher website URL (optional):`n`nExample: https://www.wolfvision.com/`n`nLeave blank to skip. This helps find logos and descriptions."
-        
-        # Get support/documentation page
-        $SupportUrl = Get-InputFromDialog -Title "AppGetter - Support/Documentation Page" -Prompt "Enter the support or documentation page URL (optional):`n`nExample: https://www.wolfvision.com/support`n`nLeave blank to skip. This helps find install switches and best practices."
-        
-    } else {
-        # User wants to search website
-        $WebsiteUrl = Get-InputFromDialog -Title "AppGetter - Enter Website URL" -Prompt "Enter the website URL containing the download link:`n`nExample: https://simion.com/`n`nThe script will attempt to find download links on this page."
-        
-        if ([string]::IsNullOrWhiteSpace($WebsiteUrl)) {
-            Write-Error "Website URL is required. Exiting."
-            exit 1
+        if ($downloadLocationResolution.InstallerPath) {
+            $inputInstallerPath = $downloadLocationResolution.InstallerPath
         }
-        
-        # Prompt for developer/support pages
-        Write-Host "`nGathering additional information..." -ForegroundColor Cyan
-        
-        # Get developer/publisher page
-        $DeveloperUrl = Get-InputFromDialog -Title "AppGetter - Developer/Publisher Page" -Prompt "Enter the developer or publisher website URL (optional):`n`nExample: https://www.wolfvision.com/`n`nLeave blank to skip. This helps find logos and descriptions."
-        
-        # Get support/documentation page
-        $SupportUrl = Get-InputFromDialog -Title "AppGetter - Support/Documentation Page" -Prompt "Enter the support or documentation page URL (optional):`n`nExample: https://www.wolfvision.com/support`n`nLeave blank to skip. This helps find install switches and best practices."
+
+        foreach ($note in $downloadLocationResolution.Notes) {
+            Write-Host "Download location note: $note" -ForegroundColor Cyan
+        }
+    } catch {
+        Write-Host "Warning: could not resolve download location: $_" -ForegroundColor Yellow
     }
+}
+
+# Prompt for required information if not provided
+if ([string]::IsNullOrWhiteSpace($WebsiteUrl) -and [string]::IsNullOrWhiteSpace($DownloadUrl) -and [string]::IsNullOrWhiteSpace($inputInstallerPath)) {
+    Write-Host "No source input provided. Opening input dialog..." -ForegroundColor Cyan
+
+    $sourceChoice = Get-InputFromDialog -Title "AppGetter - Source Type" -Prompt "Select source type:`n`nEnter:`n  - 'url' for direct installer URL`n  - 'website' to discover link from website`n  - 'file' for local installer path`n  - 'folder' for local download folder"
+
+    switch -Regex ($sourceChoice) {
+        "^(url|u)$" {
+            $DownloadUrl = Get-InputFromDialog -Title "AppGetter - Enter Download URL" -Prompt "Enter direct download URL:`n`nExample: https://example.com/installer.exe"
+            if ([string]::IsNullOrWhiteSpace($DownloadUrl)) {
+                Write-Error "Download URL is required. Exiting."
+                exit 1
+            }
+            Write-Success "Using direct download URL: $DownloadUrl"
+        }
+        "^(file|f)$" {
+            $inputInstallerPath = Get-InputFromDialog -Title "AppGetter - Installer File" -Prompt "Enter full installer file path:`n`nExample: C:\Installers\setup.exe"
+            if ([string]::IsNullOrWhiteSpace($inputInstallerPath) -or -not (Test-Path -LiteralPath $inputInstallerPath)) {
+                Write-Error "Valid installer file path is required. Exiting."
+                exit 1
+            }
+            Write-Success "Using local installer file: $inputInstallerPath"
+        }
+        "^(folder|dir|d)$" {
+            $DownloadLocation = Get-InputFromDialog -Title "AppGetter - Download Folder" -Prompt "Enter download folder path containing installer files:"
+            if ([string]::IsNullOrWhiteSpace($DownloadLocation)) {
+                Write-Error "Download folder path is required. Exiting."
+                exit 1
+            }
+            $downloadLocationResolution = Resolve-AppGetterDownloadLocation -DownloadLocation $DownloadLocation
+            if (-not $downloadLocationResolution.InstallerPath) {
+                Write-Error "No supported installer file found in the provided folder. Exiting."
+                exit 1
+            }
+            $inputInstallerPath = $downloadLocationResolution.InstallerPath
+            Write-Success "Using local installer from folder: $inputInstallerPath"
+        }
+        default {
+            $WebsiteUrl = Get-InputFromDialog -Title "AppGetter - Enter Website URL" -Prompt "Enter website URL containing the download link:`n`nExample: https://simion.com/"
+            if ([string]::IsNullOrWhiteSpace($WebsiteUrl)) {
+                Write-Error "Website URL is required. Exiting."
+                exit 1
+            }
+            Write-Success "Using website URL: $WebsiteUrl"
+        }
+    }
+
+    Write-Host "`nGathering additional information..." -ForegroundColor Cyan
+    $DeveloperUrl = Get-InputFromDialog -Title "AppGetter - Developer/Publisher Page" -Prompt "Enter developer/publisher URL (optional):`n`nExample: https://www.wolfvision.com/"
+    $SupportUrl = Get-InputFromDialog -Title "AppGetter - Support/Documentation Page" -Prompt "Enter support/documentation URL (optional):`n`nExample: https://www.wolfvision.com/support"
 }
 
 if ([string]::IsNullOrWhiteSpace($AppName)) {
@@ -512,11 +558,20 @@ if ([string]::IsNullOrWhiteSpace($AppName)) {
     }
 }
 
-# Step 1: Find download URL if not provided
-Write-Step "Step 1: Finding download URL"
+# Step 1: Resolve installer source
+Write-Step "Step 1: Resolving installer source"
 $finalDownloadUrl = $DownloadUrl
+$usingLocalInstaller = $false
 
-if ([string]::IsNullOrWhiteSpace($finalDownloadUrl) -and -not [string]::IsNullOrWhiteSpace($WebsiteUrl)) {
+if (-not [string]::IsNullOrWhiteSpace($inputInstallerPath)) {
+    if (-not (Test-Path -LiteralPath $inputInstallerPath)) {
+        Write-Error "Installer path not found: $inputInstallerPath"
+        exit 1
+    }
+
+    $usingLocalInstaller = $true
+    Write-Success "Using local installer: $inputInstallerPath"
+} elseif ([string]::IsNullOrWhiteSpace($finalDownloadUrl) -and -not [string]::IsNullOrWhiteSpace($WebsiteUrl)) {
     Write-Host "Searching for download links on: $WebsiteUrl" -ForegroundColor Cyan
     $downloadLinks = Get-DownloadLinksFromWeb -Url $WebsiteUrl -AppName $AppName
     
@@ -559,7 +614,7 @@ if ([string]::IsNullOrWhiteSpace($finalDownloadUrl) -and -not [string]::IsNullOr
 } elseif (-not [string]::IsNullOrWhiteSpace($finalDownloadUrl)) {
     Write-Success "Using provided download URL: $finalDownloadUrl"
 } else {
-    Write-Error "No download URL available. Exiting."
+    Write-Error "No installer source available. Provide DownloadUrl, WebsiteUrl, InstallerPath, or DownloadLocation."
     exit 1
 }
 
@@ -628,46 +683,50 @@ if (-not (Test-Path $versionDirectory)) {
     Write-Host "Directory already exists: $versionDirectory" -ForegroundColor Yellow
 }
 
-# Step 4: Download installer
-Write-Step "Step 4: Downloading installer"
-$installerFileName = Split-Path -Leaf $finalDownloadUrl
-# Clean filename (remove query parameters)
-if ($installerFileName -match "([^?]+)") {
-    $installerFileName = $matches[1]
+# Step 4: Stage installer
+Write-Step "Step 4: Staging installer"
+$stagedInstallerPath = $null
+if ($usingLocalInstaller) {
+    $sourceInstaller = Get-Item -LiteralPath $inputInstallerPath
+    $installerFileName = $sourceInstaller.Name
+    $stagedInstallerPath = Join-Path $versionDirectory $installerFileName
+
+    if ($sourceInstaller.FullName -ne $stagedInstallerPath) {
+        Copy-Item -LiteralPath $sourceInstaller.FullName -Destination $stagedInstallerPath -Force
+        Write-Success "Copied local installer to package folder: $installerFileName"
+    } else {
+        Write-Success "Installer already in package folder: $installerFileName"
+    }
+} else {
+    $installerFileName = Split-Path -Leaf $finalDownloadUrl
+    if ($installerFileName -match "([^?]+)") {
+        $installerFileName = $matches[1]
+    }
+
+    $stagedInstallerPath = Join-Path $versionDirectory $installerFileName
+    if (-not (Start-WebDownloadWithProgress -Url $finalDownloadUrl -OutputPath $stagedInstallerPath -FileName $installerFileName)) {
+        Write-Error "Failed to download installer"
+        exit 1
+    }
 }
 
-$installerPath = Join-Path $versionDirectory $installerFileName
-
-# Download the file
-if (-not (Start-WebDownloadWithProgress -Url $finalDownloadUrl -OutputPath $installerPath -FileName $installerFileName)) {
-    Write-Error "Failed to download installer"
-    exit 1
-}
-
-$installerFile = Get-Item $installerPath
+$installerFile = Get-Item $stagedInstallerPath
 $installerExtension = $installerFile.Extension.ToLower()
 
 # Step 5: Determine install command
 Write-Step "Step 5: Determining install command"
+$switchAnalysis = $null
 if ([string]::IsNullOrWhiteSpace($InstallCommand)) {
-    # Check if we found install switches from documentation
-    $detectedSwitch = $null
-    if ($installSwitchesInfo -and $installSwitchesInfo.InstallSwitches.Count -gt 0) {
-        # Look for common silent switches in found information
-        $switchText = $installSwitchesInfo.InstallSwitches -join ' '
-        if ($switchText -match '/S\b|/SILENT|/VERYSILENT') {
-            if ($switchText -match '/VERYSILENT') {
-                $detectedSwitch = '/VERYSILENT'
-            } elseif ($switchText -match '/SILENT') {
-                $detectedSwitch = '/SILENT'
-            } else {
-                $detectedSwitch = '/S'
-            }
-            Write-Host "Using install switch from documentation: $detectedSwitch" -ForegroundColor Green
-        }
-    }
-    
-    if ($installerExtension -eq ".msi") {
+    $docResearchUrls = @()
+    if ($SupportUrl) { $docResearchUrls += $SupportUrl }
+    if ($DeveloperUrl) { $docResearchUrls += $DeveloperUrl }
+    if ($WebsiteUrl) { $docResearchUrls += $WebsiteUrl }
+    $docResearchUrls = $docResearchUrls | Select-Object -Unique
+
+    if (Get-Command Find-AppGetterSilentInstallCommand -ErrorAction SilentlyContinue) {
+        $switchAnalysis = Find-AppGetterSilentInstallCommand -InstallerPath $stagedInstallerPath -InstallerFileName $installerFileName -AppName $AppName -DocumentationUrls $docResearchUrls
+        $installCommand = $switchAnalysis.InstallCommand
+    } elseif ($installerExtension -eq ".msi") {
         $installCommand = "msiexec /i `"$installerFileName`" /quiet /norestart"
     } elseif ($installerExtension -eq ".msix" -or $installerExtension -eq ".appx") {
         $installCommand = "Add-AppxPackage -Path `"$installerFileName`""
@@ -675,11 +734,19 @@ if ([string]::IsNullOrWhiteSpace($InstallCommand)) {
         Write-Error "Archive files require manual extraction. Please provide InstallCommand parameter."
         exit 1
     } else {
-        # Use detected switch or default to /S
-        $switchToUse = if ($detectedSwitch) { $detectedSwitch } else { "/S" }
-        $installCommand = "`"$installerFileName`" $switchToUse"
+        $installCommand = "`"$installerFileName`" /S"
     }
+
     Write-Success "Detected install command: $installCommand"
+    if ($switchAnalysis) {
+        Write-Host "Switch source: $($switchAnalysis.Source) | Confidence: $($switchAnalysis.Confidence)" -ForegroundColor Green
+        if ($switchAnalysis.EngineHint) {
+            Write-Host "Installer engine hint: $($switchAnalysis.EngineHint)" -ForegroundColor Cyan
+        }
+        if ($switchAnalysis.NeedsManualReview) {
+            Write-Host "Switches may require manual verification in a test VM." -ForegroundColor Yellow
+        }
+    }
 } else {
     Write-Success "Using provided install command: $InstallCommand"
     $installCommand = $InstallCommand
@@ -955,7 +1022,7 @@ if ($IconPath -and (Test-Path $IconPath)) {
     if ($DeveloperUrl) { $urlsToTry += $DeveloperUrl }
     
     # Try website URL first, then developer URL
-    $logoDownloaded = Get-LogoFromWeb -WebsiteUrl $WebsiteUrl -DeveloperUrl $DeveloperUrl -AppName $AppName -OutputPath $logoFilePath -InstallerPath $installerPath
+    $logoDownloaded = Get-LogoFromWeb -WebsiteUrl $WebsiteUrl -DeveloperUrl $DeveloperUrl -AppName $AppName -OutputPath $logoFilePath -InstallerPath $stagedInstallerPath
     if ($logoDownloaded -and (Test-Path $logoFilePath)) {
         Copy-Item -Path $logoFilePath -Destination $iconFilePath -Force
         Write-Success "Downloaded and copied logo automatically"
@@ -968,6 +1035,13 @@ if ($IconPath -and (Test-Path $IconPath)) {
 
 # Step 10: Create readme.txt
 Write-Step "Step 10: Creating readme.txt"
+$installerSourceReference = if ($usingLocalInstaller) { $inputInstallerPath } else { $finalDownloadUrl }
+$switchSource = if ($switchAnalysis) { $switchAnalysis.Source } else { "User-provided or legacy default" }
+$switchConfidence = if ($switchAnalysis) { $switchAnalysis.Confidence } else { "n/a" }
+$switchesFound = if ($switchAnalysis -and $switchAnalysis.DetectedSwitches.Count -gt 0) { ($switchAnalysis.DetectedSwitches -join ", ") } else { "None detected" }
+$switchResearchNotes = if ($switchAnalysis -and $switchAnalysis.ResearchNotes.Count -gt 0) { ($switchAnalysis.ResearchNotes -join "`n- ") } else { "No automated research notes available." }
+$needsManualSwitchReview = if ($switchAnalysis -and $switchAnalysis.NeedsManualReview) { "Yes" } else { "No" }
+
 # Use extracted description if available, otherwise create default
 if ([string]::IsNullOrWhiteSpace($foundDescription)) {
     $description = "$AppName - Downloaded from web"
@@ -985,7 +1059,7 @@ Display name: $AppName
 Version: $foundVersion
 Publisher: $(if ($Publisher) { $Publisher } else { "Unknown" })
 Website: $(if ($WebsiteUrl) { $WebsiteUrl } else { "N/A" })
-Download URL: $finalDownloadUrl
+Installer Source: $installerSourceReference
 
 Install script:
 $installCommand
@@ -998,9 +1072,17 @@ $description
 
 Notes:
 - This package was created using AppGetter
-- Download URL: $finalDownloadUrl
+- Installer source: $installerSourceReference
 $(if ($DeveloperUrl) { "- Developer URL: $DeveloperUrl`n" })$(if ($SupportUrl) { "- Support/Documentation URL: $SupportUrl`n" })- Created: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
 $(if ($installSwitchesInfo -and $installSwitchesInfo.BestPractices.Count -gt 0) { "`nInstall Information Found:`n" + ($installSwitchesInfo.BestPractices -join "`n") + "`n" })
+
+Silent Switch Analysis:
+- Source: $switchSource
+- Confidence: $switchConfidence
+- Candidate Switches: $switchesFound
+- Needs Manual Review: $needsManualSwitchReview
+- Research Notes:
+- $switchResearchNotes
 "@
 
 $readmePath = Join-Path $versionDirectory "readme.txt"
@@ -1020,13 +1102,16 @@ $appJson = @{
     publisherUrl = if ($DeveloperUrl) { $DeveloperUrl } elseif ($WebsiteUrl) { $WebsiteUrl } else { "" }
     supportUrl = if ($SupportUrl) { $SupportUrl } elseif ($WebsiteUrl) { $WebsiteUrl } else { "" }
     installerType = 7
-    installerUrl = $finalDownloadUrl
+    installerUrl = if ($finalDownloadUrl) { $finalDownloadUrl } else { "" }
     hash = $installerHash
     installCommandLine = $installCommand
     uninstallCommandLine = "%windir%\\sysnative\\windowspowershell\\v1.0\\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1"
     installerFilename = $installerFileName
     installerContext = 2
     architecture = 2
+    installerSource = $installerSourceReference
+    installSwitchSource = $switchSource
+    installSwitchConfidence = $switchConfidence
 }
 
 $appJsonPath = Join-Path $versionDirectory "app.json"
@@ -1062,7 +1147,7 @@ $win32LobAppJson = @{
     } else {
         $null
     }
-    notes = "Generated by AppGetter at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [Web|$packageId]"
+    notes = "Generated by AppGetter at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [Source|$packageId|Switch:$switchSource|Confidence:$switchConfidence]"
     publisher = if ($Publisher) { $Publisher } else { "Unknown" }
     fileName = "$($installerFile.BaseName).intunewin"
     allowAvailableUninstall = $true
@@ -1107,14 +1192,13 @@ Write-Success "Created win32LobApp.json"
 
 # Step 13: Package with Content Prep Tool
 Write-Step "Step 13: Packaging with Content Prep Tool (intunewinapputil)"
+$outputDirectory = Split-Path $versionDirectory
+$intunewinFile = Join-Path $outputDirectory "$($installerFile.BaseName).intunewin"
 try {
     $intunewinCmd = Get-Command intunewinapputil -ErrorAction SilentlyContinue
     if (-not $intunewinCmd) {
         throw "intunewinapputil not found. Is Content Prep Tool installed and in PATH?"
     }
-    
-    $outputDirectory = Split-Path $versionDirectory
-    $intunewinFile = Join-Path $outputDirectory "$($installerFile.BaseName).intunewin"
     
     if (Test-Path $intunewinFile) {
         Remove-Item -Path $intunewinFile -Force
@@ -1149,7 +1233,7 @@ Package Details:
 - Version: $foundVersion
 - Publisher: $(if ($Publisher) { $Publisher } else { "Unknown" })
 - Installer: $installerFileName
-- Download URL: $finalDownloadUrl
+- Installer Source: $installerSourceReference
 - Output Directory: $versionDirectory
 - IntuneWin Package: $intunewinFile
 
