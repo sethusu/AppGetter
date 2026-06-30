@@ -12,6 +12,10 @@ This tool automates the creation of IntuneWin packages from web-based applicatio
 - ✅ Complete metadata file generation (app.json, win32LobApp.json)
 - ✅ Automatic version detection from website
 - ✅ Smart installer type detection (EXE, MSI, MSIX, APPX)
+- ✅ User-defined download location for web downloads
+- ✅ Local installer ("uploaded file") support
+- ✅ Silent switch intelligence (known patterns + research + help probing)
+- ✅ Modern Windows 11 style GUI launcher
 - ✅ Icon file handling
 - ✅ Proper installer filename handling
 - ✅ Version included in readme.txt
@@ -32,6 +36,14 @@ Simply run the script without parameters to open input dialogs:
 .\Create-IntuneWinFromWeb.ps1
 ```
 
+### Modern Windows 11 UI
+
+Run the GUI wrapper for an easy guided workflow:
+
+```powershell
+.\AppGetter-ModernUI.ps1
+```
+
 Dialog boxes will appear prompting you to enter:
 - Website URL (e.g., "https://simion.com/")
 - Application Name (e.g., "SIMION")
@@ -48,6 +60,18 @@ Dialog boxes will appear prompting you to enter:
 
 ```powershell
 .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/installer.exe" -AppName "MyApp" -Version "1.0.0"
+```
+
+#### With a Local Installer File
+
+```powershell
+.\Create-IntuneWinFromWeb.ps1 -LocalInstallerPath "C:\Users\me\Downloads\mysetup.exe" -AppName "MyApp"
+```
+
+#### With Custom Download Location
+
+```powershell
+.\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/setup.exe" -AppName "MyApp" -DownloadDirectory "D:\InstallerCache"
 ```
 
 #### With Specific Version
@@ -83,6 +107,16 @@ Dialog boxes will appear prompting you to enter:
 - **DownloadUrl** (Optional): Direct download URL if known
   - If provided, script will skip website scanning and download directly
   - Example: `"https://example.com/installer.exe"`
+
+- **LocalInstallerPath** (Optional): Path to an already downloaded/uploaded installer
+  - If provided, script skips web download and copies the installer into the package workspace
+  - Example: `"C:\Users\me\Downloads\setup.exe"`
+
+- **DeveloperUrl** (Optional): Developer/publisher website URL for metadata/logo lookup
+  - Example: `"https://vendor.example.com"`
+
+- **SupportUrl** (Optional): Support/documentation URL for silent switch research
+  - Example: `"https://vendor.example.com/support"`
   
 - **AppName** (Optional): The name of the application
   - If not provided, an input dialog will appear
@@ -97,16 +131,24 @@ Dialog boxes will appear prompting you to enter:
   
 - **OutputPath** (Optional): Base directory for output. Default: `"D:\Intoon In Progress"`
   - Packages will be created in: `{OutputPath}\{PackageId}\{Version}\`
+
+- **DownloadDirectory** (Optional): Directory to store raw downloaded installers before packaging
+  - Default: `%TEMP%\AppGetter\Downloads`
+  - Example: `"D:\InstallerCache"`
   
 - **IconPath** (Optional): Path to icon file (PNG format recommended)
   - If not provided, script will look for `logo.png` in the parent directory
   - If neither found, package will be created without icon
   
 - **InstallCommand** (Optional): Custom install command
-  - If not provided, script will auto-detect based on installer type:
+  - If not provided, script will auto-detect using installer type + switch intelligence:
     - MSI: `msiexec /i "installer.msi" /quiet /norestart`
     - MSIX/APPX: `Add-AppxPackage -Path "installer.msix"`
-    - EXE: `"installer.exe" /S`
+    - EXE: best known silent switch (from known framework patterns, web research, or help probes)
+
+- **DisableSwitchResearch** (Optional switch): Skip web-based switch research
+
+- **DisableSwitchTesting** (Optional switch): Skip installer help-probe testing (`/?`, `/help`, `-?`, `--help`)
 
 ## What the Script Does
 
@@ -219,7 +261,7 @@ The uninstall script:
 
 ## Notes
 
-- The script assumes silent install with `/S` flag for EXE files. Adjust `installCommandLine` in JSON files if different flags are needed.
+- EXE silent switch detection is best-effort and may still require manual validation for some installers.
 - Icon files should be PNG format for best compatibility with Intune.
 - The script will overwrite existing files in the version directory.
 - IntuneWin files are created in the parent directory (same level as version folder).
