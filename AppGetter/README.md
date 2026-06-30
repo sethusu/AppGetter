@@ -4,7 +4,11 @@ This tool automates the creation of IntuneWin packages from web-based applicatio
 
 ## Features
 
-- ✅ Interactive input dialog for website URL and application details
+- ✅ **Windows 11 desktop UI** for download location, installer import, and silent switch analysis
+- ✅ **Configurable download location** — point the app at any folder for downloaded or uploaded installers
+- ✅ **Silent switch testing** — detect whether install switches are known for MSI, EXE, MSIX, and APPX files
+- ✅ **Switch discovery** — research documentation pages and probe installer help output when switches are missing
+- ✅ Interactive input dialog for website URL and application details (CLI script)
 - ✅ Automatic download link discovery from websites
 - ✅ Registry-based detection script (no external dependencies)
 - ✅ Automatic uninstall script generation
@@ -18,11 +22,67 @@ This tool automates the creation of IntuneWin packages from web-based applicatio
 
 ## Prerequisites
 
-1. **Content Prep Tool** - Must be installed and accessible via `intunewinapputil` command
-2. **PowerShell** - Version 5.1 or later
+1. **Content Prep Tool** - Must be installed and accessible via `intunewinapputil` command (for IntuneWin packaging)
+2. **PowerShell** - Version 5.1 or later (Windows PowerShell for the WPF UI)
 3. **Internet Access** - Required to download installers from websites
+4. **Windows 10/11** - Required for the desktop UI (WPF)
 
-## Usage
+## Quick Start — Windows 11 UI
+
+Launch the modern desktop interface:
+
+```powershell
+cd AppGetter\src
+.\Launch-AppGetterUI.ps1
+```
+
+### UI workflow
+
+1. **Settings** — Set your download folder (where installers are stored)
+2. **Installer source** — Download from a URL or import a local installer file
+3. **Silent switches** — Test whether switches are known, then discover missing ones if needed
+4. **Save result** — Persist a confirmed install command for reuse on the same installer hash
+
+Settings are stored in `%LOCALAPPDATA%\AppGetter\settings.json`.
+
+## Backend module (PowerShell)
+
+Import the core module for scripting and automation:
+
+```powershell
+Import-Module .\Modules\AppGetter.Core\AppGetter.Core.psd1 -Force
+
+# Configure download location
+Set-AppGetterSettings -DownloadLocation 'D:\AppGetter\Downloads'
+
+# Import installer from URL or local path
+Import-InstallerToDownloadLocation -DownloadUrl 'https://example.com/setup.exe'
+Import-InstallerToDownloadLocation -LocalFilePath 'C:\Temp\setup.exe'
+
+# Test whether silent switches are known
+Test-InstallerSilentSwitch -InstallerPath 'D:\AppGetter\Downloads\setup.exe' -IncludeHelpProbe
+
+# Discover missing switches from docs and installer help probes
+Find-InstallerSilentSwitch -InstallerPath 'D:\AppGetter\Downloads\setup.exe' `
+    -DocumentationUrls @('https://vendor.com/deployment') -SaveResult
+```
+
+### Switch detection behavior
+
+| Status | Meaning |
+|--------|---------|
+| **Known** | High-confidence switches (MSI defaults, NSIS/Inno signatures, saved history, or doc-extracted commands) |
+| **Partial** | Likely switches from framework heuristics, documentation snippets, or help output |
+| **Unknown** | No reliable switches found — run discovery or set manually |
+
+Discovery methods:
+- Framework signature detection (NSIS, Inno Setup, InstallShield, WiX, Squirrel)
+- Known product pattern database (`data/KnownInstallSwitches.json`)
+- Documentation page research
+- Safe help probes (`/?`, `/help`, `--help`) without performing a full install
+- Saved results keyed by installer SHA256 hash
+
+## Usage — CLI script
 
 ### Interactive Mode (Recommended)
 
@@ -239,7 +299,28 @@ For SIMION specifically:
 - **Documentation**: Available at https://simion.com/info/
 - **System Requirements**: Windows 10/7, Linux (via Wine/CrossOver)
 
+## Project structure
+
+```
+AppGetter/
+├── Modules/AppGetter.Core/     # Backend module (settings, import, switch test/discovery)
+├── src/                        # Windows 11 WPF UI
+│   ├── Launch-AppGetterUI.ps1
+│   ├── AppGetter.UI.ps1
+│   └── Themes/Win11Theme.xaml
+├── data/KnownInstallSwitches.json
+├── Create-IntuneWinFromWeb.ps1 # Full IntuneWin packaging pipeline (CLI)
+└── README.md
+```
+
 ## Recent Improvements
+
+### Version 2.0
+- ✅ AppGetter.Core PowerShell module
+- ✅ Configurable download location with persistent settings
+- ✅ Installer import from URL download or local file upload
+- ✅ Silent switch testing and discovery engine
+- ✅ Windows 11 style WPF desktop UI
 
 ### Version 1.0 (2026-01-23)
 - ✅ Initial release

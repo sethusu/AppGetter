@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "frameworks": [
+    {
+      "id": "msi",
+      "name": "Windows Installer (MSI)",
+      "extensions": [".msi"],
+      "signatures": [],
+      "silentSwitch": "/quiet /norestart",
+      "installCommandTemplate": "msiexec /i \"{file}\" /quiet /norestart",
+      "confidence": "High",
+      "notes": "Standard MSI silent install switches are well-defined."
+    },
+    {
+      "id": "msix",
+      "name": "MSIX / APPX",
+      "extensions": [".msix", ".appx", ".msixbundle", ".appxbundle"],
+      "signatures": [],
+      "silentSwitch": "N/A (PowerShell deployment)",
+      "installCommandTemplate": "Add-AppxPackage -Path \"{file}\"",
+      "confidence": "High",
+      "notes": "MSIX packages deploy silently via Add-AppxPackage."
+    },
+    {
+      "id": "nsis",
+      "name": "NSIS",
+      "extensions": [".exe"],
+      "signatures": ["Nullsoft Install System"],
+      "silentSwitch": "/S",
+      "installCommandTemplate": "\"{file}\" /S",
+      "confidence": "High",
+      "notes": "NSIS installers typically use /S for silent install."
+    },
+    {
+      "id": "inno",
+      "name": "Inno Setup",
+      "extensions": [".exe"],
+      "signatures": ["Inno Setup"],
+      "silentSwitch": "/VERYSILENT /NORESTART",
+      "installCommandTemplate": "\"{file}\" /VERYSILENT /NORESTART /SUPPRESSMSGBOXES",
+      "confidence": "High",
+      "notes": "Inno Setup supports /SILENT and /VERYSILENT."
+    },
+    {
+      "id": "installshield",
+      "name": "InstallShield",
+      "extensions": [".exe"],
+      "signatures": ["InstallShield"],
+      "silentSwitch": "/s /v\"/qn\"",
+      "installCommandTemplate": "\"{file}\" /s /v\"/qn\"",
+      "confidence": "Medium",
+      "notes": "InstallShield often wraps MSI with /s and /v switches."
+    },
+    {
+      "id": "wix-burn",
+      "name": "WiX Burn Bundle",
+      "extensions": [".exe"],
+      "signatures": ["WiX Toolset"],
+      "silentSwitch": "/quiet /norestart",
+      "installCommandTemplate": "\"{file}\" /quiet /norestart",
+      "confidence": "Medium",
+      "notes": "WiX bundles commonly accept /quiet."
+    },
+    {
+      "id": "squirrel",
+      "name": "Squirrel",
+      "extensions": [".exe"],
+      "signatures": ["Squirrel"],
+      "silentSwitch": "--silent",
+      "installCommandTemplate": "\"{file}\" --silent",
+      "confidence": "Medium",
+      "notes": "Electron/Squirrel apps often use --silent."
+    },
+    {
+      "id": "generic-exe",
+      "name": "Generic EXE",
+      "extensions": [".exe"],
+      "signatures": [],
+      "silentSwitch": "/S",
+      "installCommandTemplate": "\"{file}\" /S",
+      "confidence": "Low",
+      "notes": "Fallback guess for unknown EXE installers."
+    }
+  ],
+  "commonSilentSwitches": [
+    "/S",
+    "/s",
+    "/SILENT",
+    "/VERYSILENT",
+    "/quiet",
+    "/q",
+    "/qn",
+    "/qb",
+    "--silent",
+    "--quiet",
+    "-silent",
+    "-q",
+    "/passive",
+    "/norestart",
+    "/SUPPRESSMSGBOXES",
+    "/SP-"
+  ],
+  "helpArguments": [
+    "/?",
+    "-?",
+    "/help",
+    "-help",
+    "--help",
+    "-h",
+    "/h"
+  ],
+  "knownProducts": [
+    {
+      "pattern": "7z*.exe",
+      "installCommand": "\"{file}\" /S",
+      "confidence": "High"
+    },
+    {
+      "pattern": "Firefox*.exe",
+      "installCommand": "\"{file}\" /S",
+      "confidence": "High"
+    },
+    {
+      "pattern": "Chrome*.exe",
+      "installCommand": "msiexec /i \"{file}\" /quiet /norestart",
+      "confidence": "High"
+    },
+    {
+      "pattern": "Teams*.exe",
+      "installCommand": "\"{file}\" -s",
+      "confidence": "High"
+    },
+    {
+      "pattern": "Zoom*.exe",
+      "installCommand": "\"{file}\" /silent",
+      "confidence": "High"
+    }
+  ]
+}
