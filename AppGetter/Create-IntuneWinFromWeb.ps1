@@ -38,6 +38,15 @@ param(
     
     [Parameter(Mandatory=$false)]
     [string]$DownloadUrl,
+
+    [Parameter(Mandatory=$false)]
+    [string]$LocalInstallerPath,
+
+    [Parameter(Mandatory=$false)]
+    [string]$DeveloperUrl,
+
+    [Parameter(Mandatory=$false)]
+    [string]$SupportUrl,
     
     [Parameter(Mandatory=$false)]
     [string]$AppName,
@@ -55,7 +64,16 @@ param(
     [string]$IconPath,
     
     [Parameter(Mandatory=$false)]
-    [string]$InstallCommand
+    [string]$InstallCommand,
+
+    [Parameter(Mandatory=$false)]
+    [string]$DownloadDirectory = (Join-Path $env:TEMP "AppGetter\Downloads"),
+
+    [Parameter(Mandatory=$false)]
+    [switch]$DisableSwitchResearch,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$DisableSwitchTesting
 )
 
 # Error handling
@@ -428,6 +446,324 @@ function Get-InstallSwitchesFromWeb {
     return $foundInfo
 }
 
+# Function to extract printable strings from binary installers
+function Get-FilePrintableStrings {
+    param(
+        [string]$Path,
+        [int]$MinLength = 4,
+        [int]$MaxCount = 4000
+    )
+
+    $results = New-Object System.Collections.Generic.List[string]
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+        $builder = New-Object System.Text.StringBuilder
+
+        foreach ($byte in $bytes) {
+            if ($byte -ge 32 -and $byte -le 126) {
+                [void]$builder.Append([char]$byte)
+            } else {
+                if ($builder.Length -ge $MinLength) {
+                    $results.Add($builder.ToString())
+                    if ($results.Count -ge $MaxCount) {
+                        break
+                    }
+                }
+                [void]$builder.Clear()
+            }
+        }
+
+        if ($builder.Length -ge $MinLength -and $results.Count -lt $MaxCount) {
+            $results.Add($builder.ToString())
+        }
+    } catch {
+        Write-Host "Could not parse installer strings: $_" -ForegroundColor Yellow
+    }
+
+    return $results
+}
+
+# Function to extract likely silent switches from text
+function Get-SilentSwitchesFromText {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return @()
+    }
+
+    $patterns = @(
+        '/VERYSILENT',
+        '/SILENT',
+        '/SUPPRESSMSGBOXES',
+        '/NORESTART',
+        '/quiet',
+        '/passive',
+        '/qn',
+        '/qb',
+        '/q',
+        '/S(?![a-zA-Z])',
+        '--silent',
+        '--quiet',
+        '(?<![a-zA-Z])-s(?![a-zA-Z])'
+    )
+
+    $found = @()
+    foreach ($pattern in $patterns) {
+        $matches = [regex]::Matches($Text, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        foreach ($match in $matches) {
+            $value = $match.Value.Trim()
+            if ($value -and $value -notin $found) {
+                $found += $value
+            }
+        }
+    }
+
+    return $found
+}
+
+# Function to infer installer framework and probable switches
+function Get-InstallerHeuristicSwitches {
+    param([string]$InstallerPath)
+
+    $result = @{
+        Framework = $null
+        Switches = @()
+        Evidence = @()
+    }
+
+    $strings = Get-FilePrintableStrings -Path $InstallerPath
+    if (-not $strings -or $strings.Count -eq 0) {
+        return $result
+    }
+
+    $sample = ($strings -join ' ')
+    $heuristics = @(
+        @{
+            Name = "Inno Setup"
+            Pattern = "inno setup"
+            Switches = @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART")
+        },
+        @{
+            Name = "NSIS"
+            Pattern = "nullsoft install system|nsis error"
+            Switches = @("/S")
+        },
+        @{
+            Name = "InstallShield"
+            Pattern = "installshield"
+            Switches = @("/s", "/v`"/qn`"")
+        },
+        @{
+            Name = "WiX Burn"
+            Pattern = "wixstdba|burn bootstrapper"
+            Switches = @("/quiet", "/norestart")
+        }
+    )
+
+    foreach ($heuristic in $heuristics) {
+        if ($sample -match $heuristic.Pattern) {
+            $result.Framework = $heuristic.Name
+            $result.Switches = $heuristic.Switches
+            $result.Evidence += "Matched installer framework: $($heuristic.Name)"
+            break
+        }
+    }
+
+    $stringDiscoveredSwitches = Get-SilentSwitchesFromText -Text $sample
+    if ($stringDiscoveredSwitches.Count -gt 0) {
+        foreach ($switch in $stringDiscoveredSwitches) {
+            if ($switch -notin $result.Switches) {
+                $result.Switches += $switch
+            }
+        }
+        $result.Evidence += "Found switch-like tokens inside installer binary strings"
+    }
+
+    return $result
+}
+
+# Function to probe installer help output for command line switches
+function Test-InstallerHelpSwitches {
+    param(
+        [string]$InstallerPath,
+        [int]$TimeoutSeconds = 8
+    )
+
+    $probeArguments = @("/?", "/help", "-?", "--help")
+    $result = @{
+        Switches = @()
+        Evidence = @()
+    }
+
+    foreach ($probe in $probeArguments) {
+        $stdout = Join-Path $env:TEMP ("appgetter-help-out-{0}.txt" -f ([guid]::NewGuid().ToString("N")))
+        $stderr = Join-Path $env:TEMP ("appgetter-help-err-{0}.txt" -f ([guid]::NewGuid().ToString("N")))
+
+        try {
+            $process = Start-Process -FilePath $InstallerPath -ArgumentList $probe -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            $finished = $process.WaitForExit($TimeoutSeconds * 1000)
+
+            if (-not $finished) {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            }
+
+            $output = @()
+            if (Test-Path $stdout) { $output += Get-Content -Path $stdout -ErrorAction SilentlyContinue }
+            if (Test-Path $stderr) { $output += Get-Content -Path $stderr -ErrorAction SilentlyContinue }
+            $outputText = $output -join " "
+
+            if (-not [string]::IsNullOrWhiteSpace($outputText)) {
+                $foundSwitches = Get-SilentSwitchesFromText -Text $outputText
+                foreach ($switch in $foundSwitches) {
+                    if ($switch -notin $result.Switches) {
+                        $result.Switches += $switch
+                    }
+                }
+
+                if ($foundSwitches.Count -gt 0) {
+                    $result.Evidence += "Help probe '$probe' exposed silent flags"
+                }
+            }
+        } catch {
+            # Some installers do not support help switches or may fail in non-interactive contexts.
+        } finally {
+            Remove-Item -Path $stdout -ErrorAction SilentlyContinue
+            Remove-Item -Path $stderr -ErrorAction SilentlyContinue
+        }
+    }
+
+    return $result
+}
+
+# Function to build silent switch intelligence for installer
+function Get-InstallerSwitchIntel {
+    param(
+        [string]$InstallerPath,
+        [string]$InstallerExtension,
+        [string]$WebsiteUrl,
+        [string]$SupportUrl,
+        [string]$AppName,
+        $DocumentationSwitchInfo,
+        [bool]$EnableResearch = $true,
+        [bool]$EnableTesting = $true
+    )
+
+    $intel = @{
+        Known = $false
+        Strategy = "unknown"
+        RecommendedSwitch = $null
+        Switches = @()
+        Evidence = @()
+        NeedsManualValidation = $false
+    }
+
+    switch ($InstallerExtension) {
+        ".msi" {
+            $intel.Known = $true
+            $intel.Strategy = "msi-default"
+            $intel.Switches = @("/quiet", "/norestart")
+            $intel.RecommendedSwitch = "/quiet"
+            $intel.Evidence += "MSI installers support standard msiexec silent options."
+            return $intel
+        }
+        ".msix" {
+            $intel.Known = $true
+            $intel.Strategy = "msix-default"
+            $intel.Evidence += "MSIX packages install through Add-AppxPackage."
+            return $intel
+        }
+        ".appx" {
+            $intel.Known = $true
+            $intel.Strategy = "appx-default"
+            $intel.Evidence += "APPX packages install through Add-AppxPackage."
+            return $intel
+        }
+    }
+
+    if ($DocumentationSwitchInfo -and $DocumentationSwitchInfo.InstallSwitches) {
+        $docText = $DocumentationSwitchInfo.InstallSwitches -join " "
+        $docSwitches = Get-SilentSwitchesFromText -Text $docText
+        foreach ($switch in $docSwitches) {
+            if ($switch -notin $intel.Switches) {
+                $intel.Switches += $switch
+            }
+        }
+        if ($docSwitches.Count -gt 0) {
+            $intel.Evidence += "Found potential switches from provided documentation page scan."
+        }
+    }
+
+    $heuristicResult = Get-InstallerHeuristicSwitches -InstallerPath $InstallerPath
+    foreach ($switch in $heuristicResult.Switches) {
+        if ($switch -notin $intel.Switches) {
+            $intel.Switches += $switch
+        }
+    }
+    foreach ($line in $heuristicResult.Evidence) {
+        if ($line -notin $intel.Evidence) {
+            $intel.Evidence += $line
+        }
+    }
+
+    if ($EnableResearch) {
+        $researchUrls = @()
+        if ($SupportUrl) { $researchUrls += $SupportUrl }
+        if ($WebsiteUrl -and $WebsiteUrl -notin $researchUrls) { $researchUrls += $WebsiteUrl }
+
+        foreach ($url in $researchUrls) {
+            $webInfo = Get-InstallSwitchesFromWeb -Url $url -AppName $AppName
+            if ($webInfo -and $webInfo.InstallSwitches) {
+                $webSwitches = Get-SilentSwitchesFromText -Text ($webInfo.InstallSwitches -join " ")
+                foreach ($switch in $webSwitches) {
+                    if ($switch -notin $intel.Switches) {
+                        $intel.Switches += $switch
+                    }
+                }
+                if ($webSwitches.Count -gt 0) {
+                    $intel.Evidence += "Found potential switches from web research: $url"
+                }
+            }
+        }
+    }
+
+    if ($EnableTesting -and $InstallerExtension -eq ".exe") {
+        $helpProbeResult = Test-InstallerHelpSwitches -InstallerPath $InstallerPath
+        foreach ($switch in $helpProbeResult.Switches) {
+            if ($switch -notin $intel.Switches) {
+                $intel.Switches += $switch
+            }
+        }
+        foreach ($line in $helpProbeResult.Evidence) {
+            if ($line -notin $intel.Evidence) {
+                $intel.Evidence += $line
+            }
+        }
+    }
+
+    if ($intel.Switches.Count -gt 0) {
+        $priorityOrder = @("/VERYSILENT", "/SILENT", "/quiet", "/qn", "/S", "/s", "--silent", "--quiet")
+        foreach ($candidate in $priorityOrder) {
+            $match = $intel.Switches | Where-Object { $_.ToLower() -eq $candidate.ToLower() } | Select-Object -First 1
+            if ($match) {
+                $intel.RecommendedSwitch = $match
+                break
+            }
+        }
+        if (-not $intel.RecommendedSwitch) {
+            $intel.RecommendedSwitch = $intel.Switches[0]
+        }
+        $intel.Known = $true
+        $intel.Strategy = "researched-or-tested"
+    } else {
+        $intel.Known = $false
+        $intel.Strategy = "fallback-default"
+        $intel.NeedsManualValidation = $true
+        $intel.Evidence += "No definitive silent switches discovered automatically; fallback switch required validation."
+    }
+
+    return $intel
+}
+
 # Function to download with progress
 function Start-WebDownloadWithProgress {
     param(
@@ -456,51 +792,44 @@ function Start-WebDownloadWithProgress {
     return $false
 }
 
-# Prompt for required information if not provided
-if ([string]::IsNullOrWhiteSpace($WebsiteUrl) -and [string]::IsNullOrWhiteSpace($DownloadUrl)) {
-    Write-Host "Website URL or Download URL not provided. Opening input dialog..." -ForegroundColor Cyan
-    
-    # First, ask if user has a direct download URL
-    $hasDirectUrl = Get-InputFromDialog -Title "AppGetter - Download Source" -Prompt "Do you have a direct download URL?`n`nEnter:`n  - 'yes' or 'y' if you have a direct download link`n  - 'no' or 'n' to search a website for download links`n  - Or leave blank to search a website"
-    
-    if ($hasDirectUrl -and ($hasDirectUrl -match "^(yes|y)$" -or $hasDirectUrl -match "^y")) {
-        # User has direct download URL
-        $DownloadUrl = Get-InputFromDialog -Title "AppGetter - Enter Download URL" -Prompt "Enter the direct download URL:`n`nExample: https://example.com/installer.exe`n`nOr: https://simion.com/downloads/simion-8.2.1.3.exe"
-        
+$usedInteractivePrompts = $false
+
+# Prompt for required information if no installer source provided
+if ([string]::IsNullOrWhiteSpace($WebsiteUrl) -and [string]::IsNullOrWhiteSpace($DownloadUrl) -and [string]::IsNullOrWhiteSpace($LocalInstallerPath)) {
+    $usedInteractivePrompts = $true
+    Write-Host "Installer source not provided. Opening input dialog..." -ForegroundColor Cyan
+
+    $sourceType = Get-InputFromDialog -Title "AppGetter - Installer Source" -Prompt "Choose installer source:`n`n- Enter 'local' to use an already-downloaded/uploaded installer file`n- Enter 'direct' to use a direct download URL`n- Enter 'website' to scan a site for download links`n`nDefault: website"
+
+    if ($sourceType -match "^(local|l)$") {
+        $LocalInstallerPath = Get-InputFromDialog -Title "AppGetter - Local Installer Path" -Prompt "Enter the full path to the installer file:`n`nExample: C:\Users\you\Downloads\setup.exe"
+        if ([string]::IsNullOrWhiteSpace($LocalInstallerPath)) {
+            Write-Error "Local installer path is required. Exiting."
+            exit 1
+        }
+        Write-Success "Using local installer: $LocalInstallerPath"
+    } elseif ($sourceType -match "^(direct|d|url)$") {
+        $DownloadUrl = Get-InputFromDialog -Title "AppGetter - Enter Download URL" -Prompt "Enter the direct download URL:`n`nExample: https://example.com/installer.exe"
         if ([string]::IsNullOrWhiteSpace($DownloadUrl)) {
             Write-Error "Download URL is required. Exiting."
             exit 1
         }
-        
         Write-Success "Using direct download URL: $DownloadUrl"
-        
-        # Prompt for developer/support pages after download URL
-        Write-Host "`nGathering additional information..." -ForegroundColor Cyan
-        
-        # Get developer/publisher page
-        $DeveloperUrl = Get-InputFromDialog -Title "AppGetter - Developer/Publisher Page" -Prompt "Enter the developer or publisher website URL (optional):`n`nExample: https://www.wolfvision.com/`n`nLeave blank to skip. This helps find logos and descriptions."
-        
-        # Get support/documentation page
-        $SupportUrl = Get-InputFromDialog -Title "AppGetter - Support/Documentation Page" -Prompt "Enter the support or documentation page URL (optional):`n`nExample: https://www.wolfvision.com/support`n`nLeave blank to skip. This helps find install switches and best practices."
-        
     } else {
-        # User wants to search website
         $WebsiteUrl = Get-InputFromDialog -Title "AppGetter - Enter Website URL" -Prompt "Enter the website URL containing the download link:`n`nExample: https://simion.com/`n`nThe script will attempt to find download links on this page."
-        
         if ([string]::IsNullOrWhiteSpace($WebsiteUrl)) {
             Write-Error "Website URL is required. Exiting."
             exit 1
         }
-        
-        # Prompt for developer/support pages
-        Write-Host "`nGathering additional information..." -ForegroundColor Cyan
-        
-        # Get developer/publisher page
-        $DeveloperUrl = Get-InputFromDialog -Title "AppGetter - Developer/Publisher Page" -Prompt "Enter the developer or publisher website URL (optional):`n`nExample: https://www.wolfvision.com/`n`nLeave blank to skip. This helps find logos and descriptions."
-        
-        # Get support/documentation page
-        $SupportUrl = Get-InputFromDialog -Title "AppGetter - Support/Documentation Page" -Prompt "Enter the support or documentation page URL (optional):`n`nExample: https://www.wolfvision.com/support`n`nLeave blank to skip. This helps find install switches and best practices."
     }
+}
+
+# Prompt for metadata/research sources if not already provided
+if ($usedInteractivePrompts -and [string]::IsNullOrWhiteSpace($DeveloperUrl)) {
+    $DeveloperUrl = Get-InputFromDialog -Title "AppGetter - Developer/Publisher Page" -Prompt "Enter developer/publisher website URL (optional):`n`nExample: https://www.wolfvision.com/`n`nUsed for logo/description lookup."
+}
+if ($usedInteractivePrompts -and [string]::IsNullOrWhiteSpace($SupportUrl)) {
+    $SupportUrl = Get-InputFromDialog -Title "AppGetter - Support/Documentation Page" -Prompt "Enter support/documentation URL (optional):`n`nExample: https://www.wolfvision.com/support`n`nUsed for installer switch research."
 }
 
 if ([string]::IsNullOrWhiteSpace($AppName)) {
@@ -512,42 +841,46 @@ if ([string]::IsNullOrWhiteSpace($AppName)) {
     }
 }
 
-# Step 1: Find download URL if not provided
-Write-Step "Step 1: Finding download URL"
+# Step 1: Resolve installer source
+Write-Step "Step 1: Resolving installer source"
 $finalDownloadUrl = $DownloadUrl
+$resolvedLocalInstallerPath = $null
 
-if ([string]::IsNullOrWhiteSpace($finalDownloadUrl) -and -not [string]::IsNullOrWhiteSpace($WebsiteUrl)) {
+if (-not [string]::IsNullOrWhiteSpace($LocalInstallerPath)) {
+    if (-not (Test-Path $LocalInstallerPath)) {
+        Write-Error "Local installer path not found: $LocalInstallerPath"
+        exit 1
+    }
+    $resolvedLocalInstallerPath = (Resolve-Path $LocalInstallerPath).Path
+    Write-Success "Using local installer path: $resolvedLocalInstallerPath"
+} elseif ([string]::IsNullOrWhiteSpace($finalDownloadUrl) -and -not [string]::IsNullOrWhiteSpace($WebsiteUrl)) {
     Write-Host "Searching for download links on: $WebsiteUrl" -ForegroundColor Cyan
     $downloadLinks = Get-DownloadLinksFromWeb -Url $WebsiteUrl -AppName $AppName
-    
+
     if ($downloadLinks.Count -eq 0) {
         Write-Host "No download links found automatically on the website." -ForegroundColor Yellow
         Write-Host "You can provide a direct download URL instead." -ForegroundColor Yellow
-        
-        # Offer to input direct download URL
+
         $directUrl = Get-InputFromDialog -Title "AppGetter - Direct Download URL" -Prompt "No download links found automatically.`n`nEnter a direct download URL (or leave blank to exit):`n`nExample: https://example.com/installer.exe"
-        
+
         if (-not [string]::IsNullOrWhiteSpace($directUrl)) {
             $finalDownloadUrl = $directUrl
             Write-Success "Using provided direct download URL: $finalDownloadUrl"
         } else {
-            Write-Error "No download URL available. Exiting."
+            Write-Error "No installer source available. Exiting."
             exit 1
         }
     } else {
-        # Process found download links
         Write-Host "Found $($downloadLinks.Count) potential download link(s):" -ForegroundColor Yellow
         for ($i = 0; $i -lt $downloadLinks.Count; $i++) {
             Write-Host "  [$($i+1)] $($downloadLinks[$i])" -ForegroundColor Cyan
         }
-        
-        # Use the first link that looks like an installer
+
         $selectedUrl = $downloadLinks | Where-Object { $_ -like "*.exe" -or $_ -like "*.msi" -or $_ -like "*.msix" -or $_ -like "*.appx" } | Select-Object -First 1
-        
         if ([string]::IsNullOrWhiteSpace($selectedUrl) -and $downloadLinks.Count -gt 0) {
             $selectedUrl = $downloadLinks[0]
         }
-        
+
         if (-not [string]::IsNullOrWhiteSpace($selectedUrl)) {
             $finalDownloadUrl = $selectedUrl
             Write-Success "Selected download URL: $finalDownloadUrl"
@@ -559,9 +892,12 @@ if ([string]::IsNullOrWhiteSpace($finalDownloadUrl) -and -not [string]::IsNullOr
 } elseif (-not [string]::IsNullOrWhiteSpace($finalDownloadUrl)) {
     Write-Success "Using provided download URL: $finalDownloadUrl"
 } else {
-    Write-Error "No download URL available. Exiting."
+    Write-Error "No installer source available. Exiting."
     exit 1
 }
+
+$installerSourceLabel = if ($resolvedLocalInstallerPath) { "local-file" } else { "web-download" }
+$installerSourceValue = if ($resolvedLocalInstallerPath) { $resolvedLocalInstallerPath } else { $finalDownloadUrl }
 
 # Step 2: Extract version and description if not provided
 Write-Step "Step 2: Determining version and description"
@@ -628,20 +964,43 @@ if (-not (Test-Path $versionDirectory)) {
     Write-Host "Directory already exists: $versionDirectory" -ForegroundColor Yellow
 }
 
-# Step 4: Download installer
-Write-Step "Step 4: Downloading installer"
-$installerFileName = Split-Path -Leaf $finalDownloadUrl
-# Clean filename (remove query parameters)
-if ($installerFileName -match "([^?]+)") {
-    $installerFileName = $matches[1]
-}
+# Step 4: Acquire installer (download or local copy)
+Write-Step "Step 4: Acquiring installer"
+if (-not [string]::IsNullOrWhiteSpace($resolvedLocalInstallerPath)) {
+    $installerFileName = Split-Path -Leaf $resolvedLocalInstallerPath
+    $installerPath = Join-Path $versionDirectory $installerFileName
 
-$installerPath = Join-Path $versionDirectory $installerFileName
+    if (([System.IO.Path]::GetFullPath($resolvedLocalInstallerPath)) -ne ([System.IO.Path]::GetFullPath($installerPath))) {
+        Copy-Item -Path $resolvedLocalInstallerPath -Destination $installerPath -Force
+        Write-Success "Copied local installer into package workspace."
+    } else {
+        Write-Success "Using local installer already in package workspace."
+    }
+} else {
+    $installerFileName = Split-Path -Leaf $finalDownloadUrl
+    if ($installerFileName -match "([^?]+)") {
+        $installerFileName = $matches[1]
+    }
 
-# Download the file
-if (-not (Start-WebDownloadWithProgress -Url $finalDownloadUrl -OutputPath $installerPath -FileName $installerFileName)) {
-    Write-Error "Failed to download installer"
-    exit 1
+    if ([string]::IsNullOrWhiteSpace($DownloadDirectory)) {
+        $DownloadDirectory = $versionDirectory
+    }
+    if (-not (Test-Path $DownloadDirectory)) {
+        New-Item -ItemType Directory -Path $DownloadDirectory -Force | Out-Null
+        Write-Success "Created download location: $DownloadDirectory"
+    }
+
+    $downloadedInstallerPath = Join-Path $DownloadDirectory $installerFileName
+    if (-not (Start-WebDownloadWithProgress -Url $finalDownloadUrl -OutputPath $downloadedInstallerPath -FileName $installerFileName)) {
+        Write-Error "Failed to download installer"
+        exit 1
+    }
+
+    $installerPath = Join-Path $versionDirectory $installerFileName
+    if (([System.IO.Path]::GetFullPath($downloadedInstallerPath)) -ne ([System.IO.Path]::GetFullPath($installerPath))) {
+        Copy-Item -Path $downloadedInstallerPath -Destination $installerPath -Force
+        Write-Success "Copied downloaded installer into package workspace."
+    }
 }
 
 $installerFile = Get-Item $installerPath
@@ -649,24 +1008,24 @@ $installerExtension = $installerFile.Extension.ToLower()
 
 # Step 5: Determine install command
 Write-Step "Step 5: Determining install command"
+$silentSwitchIntel = Get-InstallerSwitchIntel `
+    -InstallerPath $installerPath `
+    -InstallerExtension $installerExtension `
+    -WebsiteUrl $WebsiteUrl `
+    -SupportUrl $SupportUrl `
+    -AppName $AppName `
+    -DocumentationSwitchInfo $installSwitchesInfo `
+    -EnableResearch:(-not $DisableSwitchResearch) `
+    -EnableTesting:(-not $DisableSwitchTesting)
+
+if ($silentSwitchIntel.Switches.Count -gt 0) {
+    Write-Host "Silent switch candidates found: $($silentSwitchIntel.Switches -join ', ')" -ForegroundColor Green
+}
+foreach ($evidence in $silentSwitchIntel.Evidence | Select-Object -First 4) {
+    Write-Host "  > $evidence" -ForegroundColor DarkCyan
+}
+
 if ([string]::IsNullOrWhiteSpace($InstallCommand)) {
-    # Check if we found install switches from documentation
-    $detectedSwitch = $null
-    if ($installSwitchesInfo -and $installSwitchesInfo.InstallSwitches.Count -gt 0) {
-        # Look for common silent switches in found information
-        $switchText = $installSwitchesInfo.InstallSwitches -join ' '
-        if ($switchText -match '/S\b|/SILENT|/VERYSILENT') {
-            if ($switchText -match '/VERYSILENT') {
-                $detectedSwitch = '/VERYSILENT'
-            } elseif ($switchText -match '/SILENT') {
-                $detectedSwitch = '/SILENT'
-            } else {
-                $detectedSwitch = '/S'
-            }
-            Write-Host "Using install switch from documentation: $detectedSwitch" -ForegroundColor Green
-        }
-    }
-    
     if ($installerExtension -eq ".msi") {
         $installCommand = "msiexec /i `"$installerFileName`" /quiet /norestart"
     } elseif ($installerExtension -eq ".msix" -or $installerExtension -eq ".appx") {
@@ -675,9 +1034,19 @@ if ([string]::IsNullOrWhiteSpace($InstallCommand)) {
         Write-Error "Archive files require manual extraction. Please provide InstallCommand parameter."
         exit 1
     } else {
-        # Use detected switch or default to /S
-        $switchToUse = if ($detectedSwitch) { $detectedSwitch } else { "/S" }
-        $installCommand = "`"$installerFileName`" $switchToUse"
+        $switchToUse = if ($silentSwitchIntel.RecommendedSwitch) { $silentSwitchIntel.RecommendedSwitch } else { "/S" }
+        $extraSwitches = @()
+        if ($switchToUse -eq "/VERYSILENT") {
+            foreach ($extra in @("/SUPPRESSMSGBOXES", "/NORESTART")) {
+                if ($silentSwitchIntel.Switches -contains $extra) {
+                    $extraSwitches += $extra
+                }
+            }
+        }
+        $installCommand = "`"$installerFileName`" $switchToUse $($extraSwitches -join ' ')".Trim()
+        if ($silentSwitchIntel.NeedsManualValidation) {
+            Write-Host "Warning: silent switch could not be confirmed automatically, fallback command generated." -ForegroundColor Yellow
+        }
     }
     Write-Success "Detected install command: $installCommand"
 } else {
@@ -970,22 +1339,25 @@ if ($IconPath -and (Test-Path $IconPath)) {
 Write-Step "Step 10: Creating readme.txt"
 # Use extracted description if available, otherwise create default
 if ([string]::IsNullOrWhiteSpace($foundDescription)) {
-    $description = "$AppName - Downloaded from web"
+    $description = "$AppName - Packaged by AppGetter"
     if (-not [string]::IsNullOrWhiteSpace($Publisher)) {
-        $description = "$AppName by $Publisher - Downloaded from web"
+        $description = "$AppName by $Publisher - Packaged by AppGetter"
     }
 } else {
     $description = $foundDescription
 }
 
 $readmeContent = @"
-Package $packageId $foundVersion from Web Download
+Package $packageId $foundVersion from $installerSourceLabel
 
 Display name: $AppName
 Version: $foundVersion
 Publisher: $(if ($Publisher) { $Publisher } else { "Unknown" })
+Installer Source: $installerSourceLabel
+Installer Source Value: $installerSourceValue
 Website: $(if ($WebsiteUrl) { $WebsiteUrl } else { "N/A" })
-Download URL: $finalDownloadUrl
+Download URL: $(if ($finalDownloadUrl) { $finalDownloadUrl } else { "N/A (local file source)" })
+Download Directory: $(if ($DownloadDirectory) { $DownloadDirectory } else { "N/A" })
 
 Install script:
 $installCommand
@@ -998,9 +1370,16 @@ $description
 
 Notes:
 - This package was created using AppGetter
-- Download URL: $finalDownloadUrl
+- Download URL: $(if ($finalDownloadUrl) { $finalDownloadUrl } else { "N/A (local file source)" })
 $(if ($DeveloperUrl) { "- Developer URL: $DeveloperUrl`n" })$(if ($SupportUrl) { "- Support/Documentation URL: $SupportUrl`n" })- Created: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
 $(if ($installSwitchesInfo -and $installSwitchesInfo.BestPractices.Count -gt 0) { "`nInstall Information Found:`n" + ($installSwitchesInfo.BestPractices -join "`n") + "`n" })
+Silent Switch Analysis:
+- Strategy: $($silentSwitchIntel.Strategy)
+- Known: $($silentSwitchIntel.Known)
+- Recommended Switch: $(if ($silentSwitchIntel.RecommendedSwitch) { $silentSwitchIntel.RecommendedSwitch } else { "None found (fallback/manual validation required)" })
+- Candidate Switches: $(if ($silentSwitchIntel.Switches.Count -gt 0) { $silentSwitchIntel.Switches -join ", " } else { "None" })
+- Needs Manual Validation: $($silentSwitchIntel.NeedsManualValidation)
+- Evidence: $(if ($silentSwitchIntel.Evidence.Count -gt 0) { $silentSwitchIntel.Evidence -join " | " } else { "No evidence captured" })
 "@
 
 $readmePath = Join-Path $versionDirectory "readme.txt"
@@ -1015,18 +1394,29 @@ $appJson = @{
     description = $description
     version = $foundVersion
     source = 3  # Web download
+    installerSourceType = $installerSourceLabel
+    installerSourceLocation = $installerSourceValue
+    downloadDirectory = if ($DownloadDirectory) { $DownloadDirectory } else { "" }
     publisher = if ($Publisher) { $Publisher } else { "Unknown" }
     informationUrl = if ($WebsiteUrl) { $WebsiteUrl } elseif ($DeveloperUrl) { $DeveloperUrl } else { "" }
     publisherUrl = if ($DeveloperUrl) { $DeveloperUrl } elseif ($WebsiteUrl) { $WebsiteUrl } else { "" }
     supportUrl = if ($SupportUrl) { $SupportUrl } elseif ($WebsiteUrl) { $WebsiteUrl } else { "" }
     installerType = 7
-    installerUrl = $finalDownloadUrl
+    installerUrl = if ($finalDownloadUrl) { $finalDownloadUrl } else { "" }
     hash = $installerHash
     installCommandLine = $installCommand
     uninstallCommandLine = "%windir%\\sysnative\\windowspowershell\\v1.0\\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1"
     installerFilename = $installerFileName
     installerContext = 2
     architecture = 2
+    silentSwitchAnalysis = @{
+        strategy = $silentSwitchIntel.Strategy
+        known = $silentSwitchIntel.Known
+        recommendedSwitch = if ($silentSwitchIntel.RecommendedSwitch) { $silentSwitchIntel.RecommendedSwitch } else { "" }
+        switchCandidates = $silentSwitchIntel.Switches
+        evidence = $silentSwitchIntel.Evidence
+        needsManualValidation = $silentSwitchIntel.NeedsManualValidation
+    }
 }
 
 $appJsonPath = Join-Path $versionDirectory "app.json"
@@ -1062,7 +1452,7 @@ $win32LobAppJson = @{
     } else {
         $null
     }
-    notes = "Generated by AppGetter at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [Web|$packageId]"
+    notes = "Generated by AppGetter at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [$installerSourceLabel|$packageId|SwitchStrategy:$($silentSwitchIntel.Strategy)]"
     publisher = if ($Publisher) { $Publisher } else { "Unknown" }
     fileName = "$($installerFile.BaseName).intunewin"
     allowAvailableUninstall = $true
@@ -1107,15 +1497,14 @@ Write-Success "Created win32LobApp.json"
 
 # Step 13: Package with Content Prep Tool
 Write-Step "Step 13: Packaging with Content Prep Tool (intunewinapputil)"
+$outputDirectory = Split-Path $versionDirectory
+$intunewinFile = Join-Path $outputDirectory "$($installerFile.BaseName).intunewin"
 try {
     $intunewinCmd = Get-Command intunewinapputil -ErrorAction SilentlyContinue
     if (-not $intunewinCmd) {
         throw "intunewinapputil not found. Is Content Prep Tool installed and in PATH?"
     }
-    
-    $outputDirectory = Split-Path $versionDirectory
-    $intunewinFile = Join-Path $outputDirectory "$($installerFile.BaseName).intunewin"
-    
+
     if (Test-Path $intunewinFile) {
         Remove-Item -Path $intunewinFile -Force
         Write-Host "Removed existing intunewin file" -ForegroundColor Yellow
@@ -1149,7 +1538,10 @@ Package Details:
 - Version: $foundVersion
 - Publisher: $(if ($Publisher) { $Publisher } else { "Unknown" })
 - Installer: $installerFileName
-- Download URL: $finalDownloadUrl
+- Installer Source: $installerSourceLabel
+- Download URL: $(if ($finalDownloadUrl) { $finalDownloadUrl } else { "N/A (local file source)" })
+- Silent Switch Strategy: $($silentSwitchIntel.Strategy)
+- Recommended Silent Switch: $(if ($silentSwitchIntel.RecommendedSwitch) { $silentSwitchIntel.RecommendedSwitch } else { "None found (fallback/manual check)" })
 - Output Directory: $versionDirectory
 - IntuneWin Package: $intunewinFile
 
