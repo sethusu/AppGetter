@@ -47,6 +47,12 @@ param(
     
     [Parameter(Mandatory=$false)]
     [string]$Publisher,
+
+    [Parameter(Mandatory=$false)]
+    [string]$DeveloperUrl,
+
+    [Parameter(Mandatory=$false)]
+    [string]$SupportUrl,
     
     [Parameter(Mandatory=$false)]
     [string]$OutputPath = "D:\Intoon In Progress",

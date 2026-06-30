@@ -15,6 +15,42 @@ This tool automates the creation of IntuneWin packages from web-based applicatio
 - ✅ Icon file handling
 - ✅ Proper installer filename handling
 - ✅ Version included in readme.txt
+- ✅ Backend API for download location configuration, installer upload/download, and package creation
+- ✅ Silent switch intelligence that can identify known switches, research documentation pages, and optionally probe installer help output (Windows hosts)
+- ✅ Modern Windows 11-style web dashboard tied to the packaging script
+
+## Web Control Center (Backend + Windows 11 UI)
+
+AppGetter now includes a browser-based control center powered by Flask.
+
+### What it adds
+
+- Configure a default download/output location through an API/UI.
+- Upload installer files or download installers by URL.
+- Analyze installer files for known/discovered silent install switches.
+- Launch `Create-IntuneWinFromWeb.ps1` from the dashboard.
+
+### Start the backend
+
+```bash
+python -m pip install -r requirements.txt
+python backend/app.py
+```
+
+Then open:
+
+```text
+http://localhost:8765
+```
+
+### API endpoints
+
+- `GET /api/config/download-location` - read configured output path
+- `PUT /api/config/download-location` - update output path
+- `POST /api/installers/upload` - upload an installer file
+- `POST /api/installers/download` - download installer by URL
+- `POST /api/installers/analyze` - detect/research/probe silent switches
+- `POST /api/packages/create` - run `Create-IntuneWinFromWeb.ps1`
 
 ## Prerequisites
 
