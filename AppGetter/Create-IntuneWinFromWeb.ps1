@@ -25,6 +25,10 @@
     Optional. Path to icon file. If not provided, will attempt to download from website.
 .PARAMETER InstallCommand
     Optional. Custom install command. If not provided, will attempt to detect based on installer type.
+.PARAMETER UseGui
+    Launch the PowerShell desktop GUI instead of running CLI packaging directly.
+.PARAMETER NoGui
+    Suppress automatic GUI launch when no parameters are supplied.
 .EXAMPLE
     .\Create-IntuneWinFromWeb.ps1 -WebsiteUrl "https://simion.com/" -AppName "SIMION" -Publisher "Adaptas Solutions, LLC"
 .EXAMPLE
@@ -55,17 +59,118 @@ param(
     [string]$SupportUrl,
     
     [Parameter(Mandatory=$false)]
-    [string]$OutputPath = "D:\Intoon In Progress",
+    [string]$OutputPath,
     
     [Parameter(Mandatory=$false)]
     [string]$IconPath,
     
     [Parameter(Mandatory=$false)]
-    [string]$InstallCommand
+    [string]$InstallCommand,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$UseGui,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$NoGui
 )
 
 # Error handling
 $ErrorActionPreference = "Stop"
+$script:SettingsFileName = "settings.json"
+
+function Get-DefaultOutputPath {
+    if ($env:USERPROFILE) {
+        return Join-Path $env:USERPROFILE "Documents\AppGetter Output"
+    }
+
+    if ($env:HOME) {
+        return Join-Path $env:HOME "AppGetter Output"
+    }
+
+    return "D:\Intoon In Progress"
+}
+
+function Get-AppGetterSettingsPath {
+    $settingsRoot = if ($env:APPDATA) {
+        Join-Path $env:APPDATA "AppGetter"
+    } elseif ($env:HOME) {
+        Join-Path $env:HOME ".appgetter"
+    } else {
+        Join-Path $PSScriptRoot ".appgetter"
+    }
+
+    if (-not (Test-Path $settingsRoot)) {
+        New-Item -ItemType Directory -Path $settingsRoot -Force | Out-Null
+    }
+
+    return Join-Path $settingsRoot $script:SettingsFileName
+}
+
+function Get-AppGetterSettings {
+    $defaultOutputPath = Get-DefaultOutputPath
+    $settingsPath = Get-AppGetterSettingsPath
+    if (-not (Test-Path $settingsPath)) {
+        return @{
+            OutputPath = $defaultOutputPath
+        }
+    }
+
+    try {
+        $raw = Get-Content -Path $settingsPath -Raw -Encoding UTF8
+        $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($parsed.OutputPath)) {
+            $parsed.OutputPath = $defaultOutputPath
+        }
+        return @{
+            OutputPath = [string]$parsed.OutputPath
+        }
+    } catch {
+        return @{
+            OutputPath = $defaultOutputPath
+        }
+    }
+}
+
+function Save-AppGetterSettings {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedOutputPath
+    )
+
+    $settingsPath = Get-AppGetterSettingsPath
+    $payload = @{
+        OutputPath = $ResolvedOutputPath
+    }
+
+    $payload | ConvertTo-Json -Depth 4 | Set-Content -Path $settingsPath -Encoding UTF8
+}
+
+function Test-AppGetterPrerequisites {
+    $intunePrepTool = Get-Command intunewinapputil -ErrorAction SilentlyContinue
+    return @{
+        ContentPrepToolAvailable = $null -ne $intunePrepTool
+    }
+}
+
+$launchGui = $UseGui -or ($PSBoundParameters.Count -eq 0 -and -not $NoGui)
+if ($launchGui) {
+    if (-not $IsWindows) {
+        throw "GUI mode requires Windows PowerShell desktop components. Run CLI mode with parameters on non-Windows hosts."
+    }
+
+    $guiScriptPath = Join-Path $PSScriptRoot "Gui\Start-AppGetterGui.ps1"
+    if (-not (Test-Path $guiScriptPath)) {
+        throw "GUI launcher not found: $guiScriptPath"
+    }
+
+    & $guiScriptPath
+    return
+}
+
+if ([string]::IsNullOrWhiteSpace($OutputPath)) {
+    $settings = Get-AppGetterSettings
+    $OutputPath = $settings.OutputPath
+}
 
 # Function to show input dialog
 function Get-InputFromDialog {
@@ -462,6 +567,13 @@ function Start-WebDownloadWithProgress {
     return $false
 }
 
+$prerequisiteStatus = Test-AppGetterPrerequisites
+if (-not $prerequisiteStatus.ContentPrepToolAvailable) {
+    throw "intunewinapputil was not found in PATH. Install the Microsoft Win32 Content Prep Tool before running AppGetter."
+}
+
+Write-Host "Using output path: $OutputPath" -ForegroundColor Cyan
+
 # Prompt for required information if not provided
 if ([string]::IsNullOrWhiteSpace($WebsiteUrl) -and [string]::IsNullOrWhiteSpace($DownloadUrl)) {
     Write-Host "Website URL or Download URL not provided. Opening input dialog..." -ForegroundColor Cyan
@@ -849,8 +961,41 @@ $detectionScriptPath = Join-Path $versionDirectory "detection.ps1"
 $detectionScript | Set-Content -Path $detectionScriptPath -Encoding UTF8
 Write-Success "Created detection script: detection.ps1"
 
-# Step 8: Create uninstall script
-Write-Step "Step 8: Creating uninstall script"
+# Step 8: Create install script
+Write-Step "Step 8: Creating install script"
+$escapedInstallCommand = $installCommand -replace "'", "''"
+$installScript = @"
+# Install script for $AppName
+# Executes the resolved silent install command and preserves Intune return code behavior.
+
+`$packageId = "$packageId"
+`$logPath = "`$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\`$packageId-install.log"
+`$installCommand = '$escapedInstallCommand'
+
+Start-Transcript -Path `$logPath -Force
+Write-Host "Starting `$packageId install"
+Write-Host "Executing: `$installCommand"
+
+try {
+    `$process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `$installCommand" -Wait -PassThru -NoNewWindow
+    `$exitCode = `$process.ExitCode
+    Write-Host "Installer exited with code: `$exitCode"
+    Stop-Transcript
+    Exit `$exitCode
+}
+catch {
+    Write-Host "Install script failed: `$_"
+    Stop-Transcript
+    Exit 1
+}
+"@
+
+$installScriptPath = Join-Path $versionDirectory "install.ps1"
+$installScript | Set-Content -Path $installScriptPath -Encoding UTF8
+Write-Success "Created install script: install.ps1"
+
+# Step 9: Create uninstall script
+Write-Step "Step 9: Creating uninstall script"
 $uninstallScript = @"
 # Uninstall script for $AppName
 # Uses registry to find and execute the uninstaller
@@ -941,8 +1086,8 @@ $uninstallScriptPath = Join-Path $versionDirectory "uninstall.ps1"
 $uninstallScript | Set-Content -Path $uninstallScriptPath -Encoding UTF8
 Write-Success "Created uninstall script: uninstall.ps1"
 
-# Step 9: Handle icon file
-Write-Step "Step 9: Handling icon file"
+# Step 10: Handle icon file
+Write-Step "Step 10: Handling icon file"
 $iconFilePath = Join-Path $versionDirectory "icon.png"
 $logoFilePath = Join-Path $appDirectory "logo.png"
 $logoDownloaded = $false
@@ -972,8 +1117,8 @@ if ($IconPath -and (Test-Path $IconPath)) {
     }
 }
 
-# Step 10: Create readme.txt
-Write-Step "Step 10: Creating readme.txt"
+# Step 11: Create readme.txt
+Write-Step "Step 11: Creating readme.txt"
 # Use extracted description if available, otherwise create default
 if ([string]::IsNullOrWhiteSpace($foundDescription)) {
     $description = "$AppName - Downloaded from web"
@@ -984,6 +1129,9 @@ if ([string]::IsNullOrWhiteSpace($foundDescription)) {
     $description = $foundDescription
 }
 
+$installScriptCommand = "%windir%\\sysnative\\WindowsPowerShell\\v1.0\\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File install.ps1"
+$uninstallScriptCommand = "%windir%\\sysnative\\WindowsPowerShell\\v1.0\\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1"
+
 $readmeContent = @"
 Package $packageId $foundVersion from Web Download
 
@@ -993,11 +1141,14 @@ Publisher: $(if ($Publisher) { $Publisher } else { "Unknown" })
 Website: $(if ($WebsiteUrl) { $WebsiteUrl } else { "N/A" })
 Download URL: $finalDownloadUrl
 
-Install script:
+Install command:
+$installScriptCommand
+
+Wrapped installer command:
 $installCommand
 
 Uninstall script:
-%windir%\sysnative\windowspowershell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1
+$uninstallScriptCommand
 
 Description:
 $description
@@ -1013,8 +1164,12 @@ $readmePath = Join-Path $versionDirectory "readme.txt"
 $readmeContent | Set-Content -Path $readmePath -Encoding UTF8
 Write-Success "Created readme.txt"
 
-# Step 11: Create app.json
-Write-Step "Step 11: Creating app.json"
+$readmeMarkdownPath = Join-Path $versionDirectory "README.md"
+$readmeContent | Set-Content -Path $readmeMarkdownPath -Encoding UTF8
+Write-Success "Created README.md"
+
+# Step 12: Create app.json
+Write-Step "Step 12: Creating app.json"
 $appJson = @{
     packageIdentifier = $packageId
     displayName = $AppName
@@ -1028,8 +1183,9 @@ $appJson = @{
     installerType = 7
     installerUrl = $finalDownloadUrl
     hash = $installerHash
-    installCommandLine = $installCommand
-    uninstallCommandLine = "%windir%\\sysnative\\windowspowershell\\v1.0\\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1"
+    installCommandLine = $installScriptCommand
+    uninstallCommandLine = $uninstallScriptCommand
+    installCommandLineRaw = $installCommand
     installerFilename = $installerFileName
     installerContext = 2
     architecture = 2
@@ -1039,8 +1195,8 @@ $appJsonPath = Join-Path $versionDirectory "app.json"
 $appJson | ConvertTo-Json -Depth 10 | Set-Content -Path $appJsonPath -Encoding UTF8
 Write-Success "Created app.json"
 
-# Step 12: Create win32LobApp.json
-Write-Step "Step 12: Creating win32LobApp.json"
+# Step 13: Create win32LobApp.json
+Write-Step "Step 13: Creating win32LobApp.json"
 $detectionScriptBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($detectionScript))
 
 # Read icon file if it exists and convert to base64
@@ -1082,7 +1238,7 @@ $win32LobAppJson = @{
         }
     )
     displayVersion = $foundVersion
-    installCommandLine = $installCommand
+    installCommandLine = $installScriptCommand
     installExperience = @{
         deviceRestartBehavior = "basedOnReturnCode"
         runAsAccount = "system"
@@ -1099,7 +1255,7 @@ $win32LobAppJson = @{
         @{ returnCode = 1618; type = "retry" }
     )
     setupFilePath = $installerFileName
-    uninstallCommandLine = "%windir%\\sysnative\\windowspowershell\\v1.0\\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1"
+    uninstallCommandLine = $uninstallScriptCommand
 }
 
 # Remove null largeIcon if no icon
@@ -1111,16 +1267,16 @@ $win32LobAppJsonPath = Join-Path $versionDirectory "win32LobApp.json"
 $win32LobAppJson | ConvertTo-Json -Depth 10 | Set-Content -Path $win32LobAppJsonPath -Encoding UTF8
 Write-Success "Created win32LobApp.json"
 
-# Step 13: Package with Content Prep Tool
-Write-Step "Step 13: Packaging with Content Prep Tool (intunewinapputil)"
+# Step 14: Package with Content Prep Tool
+Write-Step "Step 14: Packaging with Content Prep Tool (intunewinapputil)"
+$outputDirectory = Split-Path $versionDirectory
+$intunewinFile = Join-Path $outputDirectory "$($installerFile.BaseName).intunewin"
+$packagingSucceeded = $false
 try {
     $intunewinCmd = Get-Command intunewinapputil -ErrorAction SilentlyContinue
     if (-not $intunewinCmd) {
         throw "intunewinapputil not found. Is Content Prep Tool installed and in PATH?"
     }
-    
-    $outputDirectory = Split-Path $versionDirectory
-    $intunewinFile = Join-Path $outputDirectory "$($installerFile.BaseName).intunewin"
     
     if (Test-Path $intunewinFile) {
         Remove-Item -Path $intunewinFile -Force
@@ -1131,10 +1287,11 @@ try {
     
     & intunewinapputil -c $versionDirectory -s $installerFileName -o $outputDirectory -q
     
-    if ($LASTEXITCODE -eq 0 -and (Test-Path $intunewinFile)) {
+    if (Test-Path $intunewinFile) {
         Write-Success "Created IntuneWin package: $intunewinFile"
         $fileInfo = Get-Item $intunewinFile
         Write-Host "File size: $([math]::Round($fileInfo.Length / 1MB, 2)) MB" -ForegroundColor Green
+        $packagingSucceeded = $true
     } else {
         throw "Content Prep Tool failed or output file not found"
     }
@@ -1144,10 +1301,12 @@ try {
     Write-Host "You can manually run: intunewinapputil -c `"$versionDirectory`" -s `"$installerFileName`" -o `"$outputDirectory`" -q" -ForegroundColor Yellow
 }
 
+Save-AppGetterSettings -ResolvedOutputPath $OutputPath
+
 # Summary
 Write-Step "Summary" "Green"
 Write-Host @"
-Package created successfully!
+$(if ($packagingSucceeded) { "Package created successfully!" } else { "Package created with warnings." })
 
 Package Details:
 - Application: $AppName
@@ -1160,8 +1319,10 @@ Package Details:
 - IntuneWin Package: $intunewinFile
 
 Files Created:
+- install.ps1 (Install wrapper)
 - detection.ps1 (Registry-based detection)
 - uninstall.ps1 (Uninstall script)
+- README.md (Intune upload reference)
 - app.json (Application metadata)
 - win32LobApp.json (Intune app definition)
 - readme.txt (Documentation)
