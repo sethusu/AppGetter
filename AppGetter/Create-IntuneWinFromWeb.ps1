@@ -1,94 +1,46 @@
 <#
 .SYNOPSIS
-    Creates an IntuneWin package from a web-based application download with registry-based detection.
+Creates Intune Win32 packaging artifacts from a web installer URL.
 .DESCRIPTION
-    This script automates the process of:
-    1. Finding download links on a website
-    2. Downloading the installer with proper filename
-    3. Creating registry-based detection script
-    4. Creating uninstall script
-    5. Packaging with Content Prep Tool (intunewinapputil)
-    6. Updating all metadata files
+AppGetter now mirrors the WinGetter packaging model while staying PowerShell-only:
+download installer -> generate install/detection/uninstall scripts -> write metadata ->
+run intunewinapputil.
 .PARAMETER WebsiteUrl
-    The URL of the website containing the download link (e.g., "https://simion.com/")
+Web page that contains installer links.
 .PARAMETER DownloadUrl
-    Optional. Direct download URL if known. If not provided, script will attempt to find it on the website.
+Direct installer URL. Prefer this for non-interactive runs.
 .PARAMETER AppName
-    The application name (e.g., "SIMION")
+Display name for the package.
 .PARAMETER Version
-    Optional. Specific version to download. If not specified, will attempt to detect from website or use "latest".
+Package version. Defaults to a value inferred from URL/content or "latest".
 .PARAMETER Publisher
-    Optional. Publisher name (e.g., "Adaptas Solutions, LLC")
+Publisher used in metadata.
 .PARAMETER OutputPath
-    Optional. Base output path. Defaults to "D:\Intoon In Progress"
+Base output folder. Defaults to saved settings, then Documents/AppGetter Output.
 .PARAMETER IconPath
-    Optional. Path to icon file. If not provided, will attempt to download from website.
+Optional custom icon file copied to logo.png/icon.png.
 .PARAMETER InstallCommand
-    Optional. Custom install command. If not provided, will attempt to detect based on installer type.
-.EXAMPLE
-    .\Create-IntuneWinFromWeb.ps1 -WebsiteUrl "https://simion.com/" -AppName "SIMION" -Publisher "Adaptas Solutions, LLC"
-.EXAMPLE
-    .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/installer.exe" -AppName "MyApp" -Version "1.0.0"
+Optional raw installer command executed by generated install.ps1.
 #>
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$false)]
     [string]$WebsiteUrl,
-    
-    [Parameter(Mandatory=$false)]
     [string]$DownloadUrl,
-    
-    [Parameter(Mandatory=$false)]
     [string]$AppName,
-    
-    [Parameter(Mandatory=$false)]
     [string]$Version,
-    
-    [Parameter(Mandatory=$false)]
     [string]$Publisher,
-
-    [Parameter(Mandatory=$false)]
-    [string]$DeveloperUrl,
-
-    [Parameter(Mandatory=$false)]
-    [string]$SupportUrl,
-    
-    [Parameter(Mandatory=$false)]
-    [string]$OutputPath = "D:\Intoon In Progress",
-    
-    [Parameter(Mandatory=$false)]
+    [string]$OutputPath,
     [string]$IconPath,
-    
-    [Parameter(Mandatory=$false)]
     [string]$InstallCommand
 )
 
-# Error handling
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
 
-# Function to show input dialog
-function Get-InputFromDialog {
-    param(
-        [string]$Title,
-        [string]$Prompt,
-        [string]$DefaultValue = ""
-    )
-    
-    Add-Type -AssemblyName Microsoft.VisualBasic
-    $result = [Microsoft.VisualBasic.Interaction]::InputBox($Prompt, $Title, $DefaultValue)
-    
-    if ([string]::IsNullOrWhiteSpace($result)) {
-        return $null
-    }
-    
-    return $result.Trim()
-}
-
-# Function to write colored output
 function Write-Step {
-    param([string]$Message, [string]$Color = "Cyan")
-    Write-Host "`n[$Message]" -ForegroundColor $Color
+    param([string]$Message)
+    Write-Host "`n[$Message]" -ForegroundColor Cyan
 }
 
 function Write-Success {
@@ -96,981 +48,539 @@ function Write-Success {
     Write-Host "[SUCCESS] $Message" -ForegroundColor Green
 }
 
-function Write-Error {
-    param([string]$Message)
-    Write-Host "[ERROR] $Message" -ForegroundColor Red
-}
-
-# Function to extract download links from HTML
-function Get-DownloadLinksFromWeb {
-    param(
-        [string]$Url,
-        [string]$AppName
-    )
-    
-    try {
-        Write-Host "Fetching webpage: $Url" -ForegroundColor Cyan
-        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -ErrorAction Stop
-        $html = $response.Content
-        
-        # Common patterns for download links
-        $patterns = @(
-            "href\s*=\s*['""]([^'""]*\.(exe|msi|msix|appx|zip|7z))['""]",
-            "href\s*=\s*['""]([^'""]*download[^'""]*)['""]",
-            "href\s*=\s*['""]([^'""]*install[^'""]*)['""]",
-            "href\s*=\s*['""]([^'""]*setup[^'""]*)['""]"
-        )
-        
-        $downloadLinks = @()
-        foreach ($pattern in $patterns) {
-            $matches = [regex]::Matches($html, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-            foreach ($match in $matches) {
-                $link = $match.Groups[1].Value
-                # Convert relative URLs to absolute
-                if ($link -notlike "http*") {
-                    $uri = New-Object System.Uri([System.Uri]$Url, $link)
-                    $link = $uri.AbsoluteUri
-                }
-                if ($link -notin $downloadLinks) {
-                    $downloadLinks += $link
-                }
-            }
-        }
-        
-        # Also look for direct download URLs in page text
-        if ($html -match "(https?://[^\s<>""']+\.(exe|msi|msix|appx))") {
-            $directLink = $matches[1]
-            if ($directLink -notin $downloadLinks) {
-                $downloadLinks += $directLink
-            }
-        }
-        
-        return $downloadLinks
-    } catch {
-        Write-Host "Error fetching webpage: $_" -ForegroundColor Yellow
-        return @()
+function Get-AppGetterSettingsPath {
+    if ($env:APPDATA) {
+        $base = Join-Path $env:APPDATA "AppGetter"
+    } elseif ($env:HOME) {
+        $base = Join-Path $env:HOME ".appgetter"
+    } else {
+        $base = Join-Path ([System.IO.Path]::GetTempPath()) "AppGetter"
     }
+    if (-not (Test-Path $base)) {
+        New-Item -ItemType Directory -Path $base -Force | Out-Null
+    }
+    return Join-Path $base "settings.json"
 }
 
-# Function to extract version from website
-function Get-VersionFromWeb {
-    param(
-        [string]$Url,
-        [string]$AppName
+function Get-AppGetterSettings {
+    $fallbackOutput = if ($env:HOME) {
+        Join-Path $env:HOME "Documents/AppGetter Output"
+    } else {
+        Join-Path ([System.IO.Path]::GetTempPath()) "AppGetter Output"
+    }
+
+    $defaults = @{
+        OutputPath = $fallbackOutput
+        LastPackageId = ""
+    }
+
+    $path = Get-AppGetterSettingsPath
+    if (Test-Path $path) {
+        try {
+            $loaded = Get-Content -Path $path -Raw | ConvertFrom-Json
+            if ($loaded.OutputPath) { $defaults.OutputPath = $loaded.OutputPath }
+            if ($loaded.LastPackageId) { $defaults.LastPackageId = $loaded.LastPackageId }
+        } catch {
+            Write-Host "Unable to parse settings.json, using defaults." -ForegroundColor Yellow
+        }
+    }
+
+    return [pscustomobject]$defaults
+}
+
+function Save-AppGetterSettings {
+    param([string]$OutputPath, [string]$LastPackageId)
+    $settings = Get-AppGetterSettings
+    if ($OutputPath) { $settings.OutputPath = $OutputPath }
+    if ($LastPackageId) { $settings.LastPackageId = $LastPackageId }
+    $settings | ConvertTo-Json | Set-Content -Path (Get-AppGetterSettingsPath) -Encoding UTF8
+}
+
+function Get-DownloadLinksFromWeb {
+    param([string]$Url)
+    $response = Invoke-WebRequest -Uri $Url -UseBasicParsing
+    $html = $response.Content
+    $patterns = @(
+        'href\s*=\s*["'']([^"''\s>]+\.(exe|msi|msix|appx))(["''\s>])',
+        'https?://[^\s"''<>]+\.(exe|msi|msix|appx)'
     )
-    
-    try {
-        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -ErrorAction Stop
-        $html = $response.Content
-        
-        # Common version patterns
-        $versionPatterns = @(
-            "Version\s+(\d+\.\d+\.\d+\.\d+)",
-            "Version\s+(\d+\.\d+\.\d+)",
-            "v(\d+\.\d+\.\d+\.\d+)",
-            "v(\d+\.\d+\.\d+)",
-            "$AppName\s+(\d+\.\d+\.\d+\.\d+)",
-            "$AppName\s+(\d+\.\d+\.\d+)"
-        )
-        
-        foreach ($pattern in $versionPatterns) {
-            if ($html -match $pattern) {
+
+    $results = New-Object System.Collections.Generic.List[string]
+    foreach ($pattern in $patterns) {
+        $regexMatches = [regex]::Matches($html, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        foreach ($match in $regexMatches) {
+            $link = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Value }
+            if ($link -notmatch '^https?://') {
+                $link = [System.Uri]::new([System.Uri]$Url, $link).AbsoluteUri
+            }
+            if (-not $results.Contains($link)) {
+                $results.Add($link)
+            }
+        }
+    }
+    return $results
+}
+
+function Resolve-Version {
+    param([string]$ExplicitVersion, [string]$DownloadUrl, [string]$WebsiteUrl)
+    if ($ExplicitVersion) { return $ExplicitVersion }
+    if ($DownloadUrl -match '(\d+\.\d+\.\d+\.\d+|\d+\.\d+\.\d+)') {
+        return $matches[1]
+    }
+    if ($WebsiteUrl) {
+        try {
+            $html = (Invoke-WebRequest -Uri $WebsiteUrl -UseBasicParsing).Content
+            if ($html -match '(?i)\bversion\D+(\d+\.\d+\.\d+\.\d+|\d+\.\d+\.\d+)\b') {
                 return $matches[1]
             }
+        } catch {
+            Write-Host "Version could not be extracted from website." -ForegroundColor Yellow
         }
-    } catch {
-        Write-Host "Could not extract version from website" -ForegroundColor Yellow
     }
-    
-    return $null
+    return "latest"
 }
 
-# Function to extract icon from executable
-function Extract-IconFromExe {
-    param(
-        [string]$ExePath,
-        [string]$OutputPath
-    )
-    
-    try {
-        Add-Type -TypeDefinition @"
-        using System;
-        using System.Drawing;
-        using System.Drawing.Imaging;
-        using System.Runtime.InteropServices;
-        public class IconExtractor {
-            [DllImport("shell32.dll", CharSet = CharSet.Auto)]
-            public static extern IntPtr ExtractIcon(IntPtr hInst, string lpszExeFileName, int nIconIndex);
-            [DllImport("user32.dll")]
-            public static extern bool DestroyIcon(IntPtr hIcon);
-            
-            public static bool ExtractToPng(string exePath, string outputPath) {
-                try {
-                    IntPtr hIcon = ExtractIcon(IntPtr.Zero, exePath, 0);
-                    if (hIcon != IntPtr.Zero) {
-                        Icon icon = Icon.FromHandle(hIcon);
-                        using (Bitmap bmp = icon.ToBitmap()) {
-                            bmp.Save(outputPath, ImageFormat.Png);
-                        }
-                        DestroyIcon(hIcon);
-                        return true;
-                    }
-                } catch { }
-                return false;
-            }
-        }
-"@ -ErrorAction SilentlyContinue
-        
-        if ([IconExtractor]::ExtractToPng($ExePath, $OutputPath)) {
-            if (Test-Path $OutputPath -and (Get-Item $OutputPath).Length -gt 0) {
-                Write-Host "Extracted icon from installer executable" -ForegroundColor Green
-                return $true
-            }
-        }
-    } catch {
-        # Icon extraction failed, continue
-    }
-    
-    return $false
-}
-
-# Function to download logo from website
-function Get-LogoFromWeb {
-    param(
-        [string]$WebsiteUrl,
-        [string]$DeveloperUrl,
-        [string]$AppName,
-        [string]$OutputPath,
-        [string]$InstallerPath = $null
-    )
-    
-    $urls = @()
-    
-    # Extract base URLs
-    $baseUrls = @()
-    if ($WebsiteUrl) { $baseUrls += $WebsiteUrl.TrimEnd('/') }
-    if ($DeveloperUrl) { $baseUrls += $DeveloperUrl.TrimEnd('/') }
-    
-    # Try common logo paths on websites
-    foreach ($baseUrl in $baseUrls) {
-        if ($baseUrl) {
-            $logoPaths = @(
-                "logo.png", "logo.svg", "icon.png", "icon.svg", "favicon.png", "favicon.ico",
-                "images/logo.png", "images/icon.png", "img/logo.png", "img/icon.png",
-                "static/images/logo.png", "static/img/logo.png", "static/logo.png",
-                "assets/logo.png", "assets/icon.png", "assets/images/logo.png",
-                "media/logo.png", "media/icon.png", "resources/logo.png",
-                "www/logo.png", "www/images/logo.png", "public/logo.png",
-                "app/logo.png", "src/logo.png", "dist/logo.png",
-                "$($AppName.ToLower()).png", "$($AppName.ToLower()).svg"
-            )
-            
-            foreach ($path in $logoPaths) {
-                $urls += "$baseUrl/$path"
-            }
-        }
-    }
-    
-    # Try common CDN/hosting patterns
-    $cleanName = $AppName -replace '\s+', '' -replace '[^a-zA-Z0-9]', ''
-    $lowerName = $cleanName.ToLower()
-    if ($cleanName) {
-        $urls += @(
-            "https://raw.githubusercontent.com/$lowerName/$lowerName/main/logo.png",
-            "https://raw.githubusercontent.com/$lowerName/$lowerName/master/logo.png"
-        )
-    }
-    
-    # Remove duplicates
-    $urls = $urls | Select-Object -Unique
-    
-    # Try all URLs (limit to first 30)
-    $urlsToTry = $urls | Select-Object -First 30
-    foreach ($url in $urlsToTry) {
+function Resolve-Description {
+    param([string]$AppName, [string]$Publisher, [string]$WebsiteUrl)
+    if ($WebsiteUrl) {
         try {
-            Write-Host "Trying to download logo from: $url" -ForegroundColor Cyan
-            $response = Invoke-WebRequest -Uri $url -OutFile $OutputPath -ErrorAction Stop -TimeoutSec 5
-            if (Test-Path $OutputPath) {
-                $fileInfo = Get-Item $OutputPath
-                if ($fileInfo.Length -gt 0) {
-                    # Verify it's a valid image
-                    $bytes = [System.IO.File]::ReadAllBytes($OutputPath)
-                    $isImage = $false
-                    if ($bytes.Length -gt 8) {
-                        # PNG signature: 89 50 4E 47
-                        if (($bytes[0] -eq 0x89 -and $bytes[1] -eq 0x50 -and $bytes[2] -eq 0x4E -and $bytes[3] -eq 0x47) -or
-                            # JPEG signature: FF D8 FF
-                            ($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xD8 -and $bytes[2] -eq 0xFF) -or
-                            # GIF signature: GIF
-                            ($bytes[0] -eq 0x47 -and $bytes[1] -eq 0x49 -and $bytes[2] -eq 0x46)) {
-                            $isImage = $true
-                        }
-                    }
-                    
-                    if ($isImage -or $OutputPath -like "*.svg") {
-                        Write-Success "Downloaded logo from: $url"
-                        return $true
-                    } else {
-                        Remove-Item $OutputPath -ErrorAction SilentlyContinue
-                    }
-                }
+            $html = (Invoke-WebRequest -Uri $WebsiteUrl -UseBasicParsing).Content
+            if ($html -match '<meta\s+name=["'']description["'']\s+content=["'']([^"'']+)["'']') {
+                return $matches[1].Trim()
+            }
+            if ($html -match '<meta\s+property=["'']og:description["'']\s+content=["'']([^"'']+)["'']') {
+                return $matches[1].Trim()
             }
         } catch {
-            if (Test-Path $OutputPath) {
-                Remove-Item $OutputPath -ErrorAction SilentlyContinue
-            }
+            Write-Host "Description extraction failed, using default." -ForegroundColor Yellow
         }
     }
-    
-    # Last resort: Try to extract icon from installer if it's an EXE
-    if ($InstallerPath -and (Test-Path $InstallerPath) -and $InstallerPath -like "*.exe") {
-        Write-Host "Attempting to extract icon from installer executable..." -ForegroundColor Cyan
-        if (Extract-IconFromExe -ExePath $InstallerPath -OutputPath $OutputPath) {
-            return $true
-        }
+
+    if ($Publisher) {
+        return "$AppName by $Publisher packaged with AppGetter."
     }
-    
-    return $false
+    return "$AppName packaged with AppGetter."
 }
 
-# Function to extract description from website
-function Get-DescriptionFromWeb {
-    param(
-        [string]$Url,
-        [string]$AppName
-    )
-    
-    try {
-        Write-Host "Fetching webpage for description: $Url" -ForegroundColor Cyan
-        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -ErrorAction Stop
-        $html = $response.Content
-        
-        # Try to extract meta description
-        if ($html -match '<meta\s+name=["'']description["'']\s+content=["'']([^"'']+)["'']') {
-            $description = $matches[1]
-            if ($description.Length -gt 20) {
-                return $description
-            }
-        }
-        
-        # Try to extract from Open Graph description
-        if ($html -match '<meta\s+property=["'']og:description["'']\s+content=["'']([^"'']+)["'']') {
-            $description = $matches[1]
-            if ($description.Length -gt 20) {
-                return $description
-            }
-        }
-        
-        # Try to find description in common HTML patterns
-        $patterns = @(
-            '<p[^>]*class=["''][^"'']*description[^"'']*["''][^>]*>([^<]+)</p>',
-            '<div[^>]*class=["''][^"'']*description[^"'']*["''][^>]*>([^<]+)</div>',
-            '<div[^>]*id=["''][^"'']*description[^"'']*["''][^>]*>([^<]+)</div>'
-        )
-        
-        foreach ($pattern in $patterns) {
-            if ($html -match $pattern) {
-                $description = $matches[1] -replace '\s+', ' ' | ForEach-Object { $_.Trim() }
-                if ($description.Length -gt 20 -and $description.Length -lt 500) {
-                    return $description
-                }
-            }
-        }
-        
-    } catch {
-        Write-Host "Could not extract description from website: $_" -ForegroundColor Yellow
-    }
-    
-    return $null
-}
-
-# Function to scan pages for install switches and best practices
-function Get-InstallSwitchesFromWeb {
-    param(
-        [string]$Url,
-        [string]$AppName
-    )
-    
-    $foundInfo = @{
-        InstallSwitches = @()
-        BestPractices = @()
-        SilentFlags = @()
-    }
-    
-    try {
-        Write-Host "Scanning page for install switches: $Url" -ForegroundColor Cyan
-        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -ErrorAction Stop
-        $html = $response.Content
-        $text = $html -replace '<[^>]+>', ' ' -replace '\s+', ' '
-        
-        # Look for common install switch patterns
-        $switchPatterns = @(
-            '/S', '/SILENT', '/VERYSILENT', '/quiet', '/qn', '/qb', '/Q', '/s',
-            'silent install', 'quiet install', 'unattended install', 'command line',
-            'install switches', 'install parameters', 'deployment', 'msiexec'
-        )
-        
-        foreach ($pattern in $switchPatterns) {
-            if ($text -match $pattern -or $html -match $pattern) {
-                # Try to extract context around the match
-                $context = $text | Select-String -Pattern ".{0,100}$pattern.{0,100}" -AllMatches
-                if ($context) {
-                    foreach ($match in $context.Matches) {
-                        $foundInfo.InstallSwitches += $match.Value.Trim()
-                    }
-                }
-            }
-        }
-        
-        # Look for documentation sections
-        if ($text -match '(?i)(deployment|enterprise|administrator|silent|unattended)') {
-            $foundInfo.BestPractices += "Page contains deployment/enterprise installation information"
-        }
-        
-    } catch {
-        Write-Host "Could not scan page for install switches: $_" -ForegroundColor Yellow
-    }
-    
-    return $foundInfo
-}
-
-# Function to download with progress
-function Start-WebDownloadWithProgress {
-    param(
-        [string]$Url,
-        [string]$OutputPath,
-        [string]$FileName
-    )
-    
-    Write-Host "Downloading from: $Url" -ForegroundColor Cyan
-    
-    try {
-        $ProgressPreference = 'Continue'
-        Invoke-WebRequest -Uri $Url -OutFile $OutputPath -UseBasicParsing -ErrorAction Stop
-        
-        if (Test-Path $OutputPath) {
-            $fileInfo = Get-Item $OutputPath
-            $sizeMB = [math]::Round($fileInfo.Length / 1MB, 2)
-            Write-Success "Downloaded: $FileName ($sizeMB MB)"
-            return $true
-        }
-    } catch {
-        Write-Error "Download failed: $_"
-        return $false
-    }
-    
-    return $false
-}
-
-# Prompt for required information if not provided
-if ([string]::IsNullOrWhiteSpace($WebsiteUrl) -and [string]::IsNullOrWhiteSpace($DownloadUrl)) {
-    Write-Host "Website URL or Download URL not provided. Opening input dialog..." -ForegroundColor Cyan
-    
-    # First, ask if user has a direct download URL
-    $hasDirectUrl = Get-InputFromDialog -Title "AppGetter - Download Source" -Prompt "Do you have a direct download URL?`n`nEnter:`n  - 'yes' or 'y' if you have a direct download link`n  - 'no' or 'n' to search a website for download links`n  - Or leave blank to search a website"
-    
-    if ($hasDirectUrl -and ($hasDirectUrl -match "^(yes|y)$" -or $hasDirectUrl -match "^y")) {
-        # User has direct download URL
-        $DownloadUrl = Get-InputFromDialog -Title "AppGetter - Enter Download URL" -Prompt "Enter the direct download URL:`n`nExample: https://example.com/installer.exe`n`nOr: https://simion.com/downloads/simion-8.2.1.3.exe"
-        
-        if ([string]::IsNullOrWhiteSpace($DownloadUrl)) {
-            Write-Error "Download URL is required. Exiting."
-            exit 1
-        }
-        
-        Write-Success "Using direct download URL: $DownloadUrl"
-        
-        # Prompt for developer/support pages after download URL
-        Write-Host "`nGathering additional information..." -ForegroundColor Cyan
-        
-        # Get developer/publisher page
-        $DeveloperUrl = Get-InputFromDialog -Title "AppGetter - Developer/Publisher Page" -Prompt "Enter the developer or publisher website URL (optional):`n`nExample: https://www.wolfvision.com/`n`nLeave blank to skip. This helps find logos and descriptions."
-        
-        # Get support/documentation page
-        $SupportUrl = Get-InputFromDialog -Title "AppGetter - Support/Documentation Page" -Prompt "Enter the support or documentation page URL (optional):`n`nExample: https://www.wolfvision.com/support`n`nLeave blank to skip. This helps find install switches and best practices."
-        
-    } else {
-        # User wants to search website
-        $WebsiteUrl = Get-InputFromDialog -Title "AppGetter - Enter Website URL" -Prompt "Enter the website URL containing the download link:`n`nExample: https://simion.com/`n`nThe script will attempt to find download links on this page."
-        
-        if ([string]::IsNullOrWhiteSpace($WebsiteUrl)) {
-            Write-Error "Website URL is required. Exiting."
-            exit 1
-        }
-        
-        # Prompt for developer/support pages
-        Write-Host "`nGathering additional information..." -ForegroundColor Cyan
-        
-        # Get developer/publisher page
-        $DeveloperUrl = Get-InputFromDialog -Title "AppGetter - Developer/Publisher Page" -Prompt "Enter the developer or publisher website URL (optional):`n`nExample: https://www.wolfvision.com/`n`nLeave blank to skip. This helps find logos and descriptions."
-        
-        # Get support/documentation page
-        $SupportUrl = Get-InputFromDialog -Title "AppGetter - Support/Documentation Page" -Prompt "Enter the support or documentation page URL (optional):`n`nExample: https://www.wolfvision.com/support`n`nLeave blank to skip. This helps find install switches and best practices."
+function Get-InstallerInstallCommand {
+    param([string]$InstallerFileName, [string]$InstallerExtension)
+    $ext = $InstallerExtension.ToLowerInvariant()
+    switch ($ext) {
+        ".msi"  { return "msiexec /i `"$InstallerFileName`" /quiet /norestart" }
+        ".msix" { return "Add-AppxPackage -Path `"$InstallerFileName`"" }
+        ".appx" { return "Add-AppxPackage -Path `"$InstallerFileName`"" }
+        default { return "`"$InstallerFileName`" /S" }
     }
 }
 
-if ([string]::IsNullOrWhiteSpace($AppName)) {
-    $AppName = Get-InputFromDialog -Title "AppGetter - Enter Application Name" -Prompt "Enter the application name:`n`nExample: SIMION"
-    
-    if ([string]::IsNullOrWhiteSpace($AppName)) {
-        Write-Error "Application name is required. Exiting."
-        exit 1
-    }
-}
+function New-InstallScript {
+    param([string]$PackageId, [string]$DisplayName, [string]$ExpectedVersion, [string]$RawInstallCommand)
+    return @"
+# Install script for $DisplayName
+# Intune Win32 deployment script generated by AppGetter
 
-# Step 1: Find download URL if not provided
-Write-Step "Step 1: Finding download URL"
-$finalDownloadUrl = $DownloadUrl
+`$ErrorActionPreference = 'Stop'
+`$packageId = '$PackageId'
+`$displayName = '$DisplayName'
+`$expectedVersion = '$ExpectedVersion'
+`$logPath = "`$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\`$packageId-install.log"
 
-if ([string]::IsNullOrWhiteSpace($finalDownloadUrl) -and -not [string]::IsNullOrWhiteSpace($WebsiteUrl)) {
-    Write-Host "Searching for download links on: $WebsiteUrl" -ForegroundColor Cyan
-    $downloadLinks = Get-DownloadLinksFromWeb -Url $WebsiteUrl -AppName $AppName
-    
-    if ($downloadLinks.Count -eq 0) {
-        Write-Host "No download links found automatically on the website." -ForegroundColor Yellow
-        Write-Host "You can provide a direct download URL instead." -ForegroundColor Yellow
-        
-        # Offer to input direct download URL
-        $directUrl = Get-InputFromDialog -Title "AppGetter - Direct Download URL" -Prompt "No download links found automatically.`n`nEnter a direct download URL (or leave blank to exit):`n`nExample: https://example.com/installer.exe"
-        
-        if (-not [string]::IsNullOrWhiteSpace($directUrl)) {
-            $finalDownloadUrl = $directUrl
-            Write-Success "Using provided direct download URL: $finalDownloadUrl"
-        } else {
-            Write-Error "No download URL available. Exiting."
-            exit 1
-        }
-    } else {
-        # Process found download links
-        Write-Host "Found $($downloadLinks.Count) potential download link(s):" -ForegroundColor Yellow
-        for ($i = 0; $i -lt $downloadLinks.Count; $i++) {
-            Write-Host "  [$($i+1)] $($downloadLinks[$i])" -ForegroundColor Cyan
-        }
-        
-        # Use the first link that looks like an installer
-        $selectedUrl = $downloadLinks | Where-Object { $_ -like "*.exe" -or $_ -like "*.msi" -or $_ -like "*.msix" -or $_ -like "*.appx" } | Select-Object -First 1
-        
-        if ([string]::IsNullOrWhiteSpace($selectedUrl) -and $downloadLinks.Count -gt 0) {
-            $selectedUrl = $downloadLinks[0]
-        }
-        
-        if (-not [string]::IsNullOrWhiteSpace($selectedUrl)) {
-            $finalDownloadUrl = $selectedUrl
-            Write-Success "Selected download URL: $finalDownloadUrl"
-        } else {
-            Write-Error "Could not determine download URL from found links. Exiting."
-            exit 1
-        }
-    }
-} elseif (-not [string]::IsNullOrWhiteSpace($finalDownloadUrl)) {
-    Write-Success "Using provided download URL: $finalDownloadUrl"
-} else {
-    Write-Error "No download URL available. Exiting."
-    exit 1
-}
-
-# Step 2: Extract version and description if not provided
-Write-Step "Step 2: Determining version and description"
-$foundVersion = $Version
-$foundDescription = $null
-
-# Extract description from website/developer pages
-$urlsToCheck = @()
-if ($WebsiteUrl) { $urlsToCheck += $WebsiteUrl }
-if ($DeveloperUrl) { $urlsToCheck += $DeveloperUrl }
-
-foreach ($url in $urlsToCheck) {
-    if (-not $foundDescription) {
-        $foundDescription = Get-DescriptionFromWeb -Url $url -AppName $AppName
-        if ($foundDescription) {
-            Write-Success "Extracted description from: $url"
-            break
-        }
-    }
-}
-
-if ([string]::IsNullOrWhiteSpace($foundVersion) -and -not [string]::IsNullOrWhiteSpace($WebsiteUrl)) {
-    $extractedVersion = Get-VersionFromWeb -Url $WebsiteUrl -AppName $AppName
-    if ($extractedVersion) {
-        $foundVersion = $extractedVersion
-        Write-Success "Extracted version from website: $foundVersion"
-    }
-}
-
-if ([string]::IsNullOrWhiteSpace($foundVersion)) {
-    $foundVersion = "latest"
-    Write-Host "Version not found, using: $foundVersion" -ForegroundColor Yellow
-}
-
-# Scan support/documentation pages for install switches
-$installSwitchesInfo = $null
-if ($SupportUrl) {
-    Write-Host "Scanning support/documentation page for install switches..." -ForegroundColor Cyan
-    $installSwitchesInfo = Get-InstallSwitchesFromWeb -Url $SupportUrl -AppName $AppName
-    if ($installSwitchesInfo.InstallSwitches.Count -gt 0) {
-        Write-Host "Found install switch information:" -ForegroundColor Green
-        foreach ($switch in $installSwitchesInfo.InstallSwitches | Select-Object -First 3) {
-            Write-Host "  - $switch" -ForegroundColor Cyan
-        }
-    }
-    if ($installSwitchesInfo.BestPractices.Count -gt 0) {
-        Write-Host "Found best practices information:" -ForegroundColor Green
-        foreach ($practice in $installSwitchesInfo.BestPractices) {
-            Write-Host "  - $practice" -ForegroundColor Cyan
-        }
-    }
-}
-
-# Step 3: Create directory structure
-Write-Step "Step 3: Creating directory structure"
-$packageId = $AppName -replace '[^a-zA-Z0-9]', ''
-$appDirectory = Join-Path $OutputPath $packageId
-$versionDirectory = Join-Path $appDirectory $foundVersion
-
-if (-not (Test-Path $versionDirectory)) {
-    New-Item -ItemType Directory -Path $versionDirectory -Force | Out-Null
-    Write-Success "Created directory: $versionDirectory"
-} else {
-    Write-Host "Directory already exists: $versionDirectory" -ForegroundColor Yellow
-}
-
-# Step 4: Download installer
-Write-Step "Step 4: Downloading installer"
-$installerFileName = Split-Path -Leaf $finalDownloadUrl
-# Clean filename (remove query parameters)
-if ($installerFileName -match "([^?]+)") {
-    $installerFileName = $matches[1]
-}
-
-$installerPath = Join-Path $versionDirectory $installerFileName
-
-# Download the file
-if (-not (Start-WebDownloadWithProgress -Url $finalDownloadUrl -OutputPath $installerPath -FileName $installerFileName)) {
-    Write-Error "Failed to download installer"
-    exit 1
-}
-
-$installerFile = Get-Item $installerPath
-$installerExtension = $installerFile.Extension.ToLower()
-
-# Step 5: Determine install command
-Write-Step "Step 5: Determining install command"
-if ([string]::IsNullOrWhiteSpace($InstallCommand)) {
-    # Check if we found install switches from documentation
-    $detectedSwitch = $null
-    if ($installSwitchesInfo -and $installSwitchesInfo.InstallSwitches.Count -gt 0) {
-        # Look for common silent switches in found information
-        $switchText = $installSwitchesInfo.InstallSwitches -join ' '
-        if ($switchText -match '/S\b|/SILENT|/VERYSILENT') {
-            if ($switchText -match '/VERYSILENT') {
-                $detectedSwitch = '/VERYSILENT'
-            } elseif ($switchText -match '/SILENT') {
-                $detectedSwitch = '/SILENT'
-            } else {
-                $detectedSwitch = '/S'
-            }
-            Write-Host "Using install switch from documentation: $detectedSwitch" -ForegroundColor Green
-        }
-    }
-    
-    if ($installerExtension -eq ".msi") {
-        $installCommand = "msiexec /i `"$installerFileName`" /quiet /norestart"
-    } elseif ($installerExtension -eq ".msix" -or $installerExtension -eq ".appx") {
-        $installCommand = "Add-AppxPackage -Path `"$installerFileName`""
-    } elseif ($installerExtension -eq ".zip" -or $installerExtension -eq ".7z") {
-        Write-Error "Archive files require manual extraction. Please provide InstallCommand parameter."
-        exit 1
-    } else {
-        # Use detected switch or default to /S
-        $switchToUse = if ($detectedSwitch) { $detectedSwitch } else { "/S" }
-        $installCommand = "`"$installerFileName`" $switchToUse"
-    }
-    Write-Success "Detected install command: $installCommand"
-} else {
-    Write-Success "Using provided install command: $InstallCommand"
-    $installCommand = $InstallCommand
-}
-
-# Step 6: Get installer hash
-Write-Step "Step 6: Calculating installer hash"
-try {
-    $installerHash = (Get-FileHash -Path $installerFile.FullName -Algorithm SHA256).Hash
-    Write-Success "Installer SHA256: $installerHash"
-} catch {
-    Write-Error "Failed to calculate hash: $_"
-    $installerHash = ""
-}
-
-# Step 7: Create registry-based detection script
-Write-Step "Step 7: Creating registry-based detection script"
-$detectionScript = @"
-# Registry-based detection script for $AppName
-# Checks for $AppName installation in Windows Uninstall registry keys
-
-`$packageId = "$packageId"
-`$version = "$foundVersion"
-`$displayName = "$AppName"
-
-# Start transcript for logging
-`$logPath = "`$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\`$packageId-detection.log"
 Start-Transcript -Path `$logPath -Force
-Write-Host "Starting `$packageId `$version detection (Registry-based)"
+Write-Host "Starting install for `$displayName (`$packageId) version `$expectedVersion"
 
-# Registry paths to check
+try {
+    `$scriptRoot = Split-Path -Parent `$MyInvocation.MyCommand.Path
+    Set-Location -Path `$scriptRoot
+    `$installCommand = @'
+$RawInstallCommand
+'@
+    Write-Host "Executing install command: `$installCommand"
+    `$process = Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `$installCommand" -Wait -PassThru -NoNewWindow
+
+    switch (`$process.ExitCode) {
+        0 { Stop-Transcript; exit 0 }
+        3010 { Stop-Transcript; exit 3010 }
+        1641 { Stop-Transcript; exit 1641 }
+        1618 { Stop-Transcript; exit 1618 }
+        default { Stop-Transcript; exit `$process.ExitCode }
+    }
+}
+catch {
+    Write-Host "Install failed: `$_"
+    Stop-Transcript
+    exit 1
+}
+"@
+}
+
+function New-DetectionScript {
+    param([string]$PackageId, [string]$DisplayName, [string]$ExpectedVersion)
+    return @"
+# Registry-based detection script for $DisplayName
+# Intune Win32 deployment script generated by AppGetter
+
+`$ErrorActionPreference = 'Continue'
+`$packageId = '$PackageId'
+`$displayName = '$DisplayName'
+`$expectedVersion = '$ExpectedVersion'
+`$logPath = "`$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\`$packageId-detection.log"
+
+Start-Transcript -Path `$logPath -Force
 `$registryPaths = @(
-    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
 )
 
-`$found = `$false
-`$installedVersion = `$null
-`$allMatchingVersions = @()
-
-# Search for application in registry
-foreach (`$regPath in `$registryPaths) {
+`$foundVersions = @()
+foreach (`$path in `$registryPaths) {
     try {
-        `$allKeys = Get-ItemProperty `$regPath -ErrorAction SilentlyContinue
-        
-        if (`$allKeys) {
-            `$uninstallKeys = `$allKeys | Where-Object {
-                `$_.DisplayName -like "*$AppName*" -or 
-                `$_.PSChildName -like "*$($packageId.ToLower())*" -or
-                `$_.PSChildName -like "*$($packageId)*"
-            }
-            
-            if (`$uninstallKeys) {
-                foreach (`$key in `$uninstallKeys) {
-                    Write-Host "Found registry key: `$(`$key.PSChildName)"
-                    Write-Host "DisplayName: `$(`$key.DisplayName)"
-                    Write-Host "DisplayVersion: `$(`$key.DisplayVersion)"
-                    
-                    if (`$key.DisplayName -like "*$AppName*" -and `$key.DisplayVersion) {
-                        `$allMatchingVersions += @{
-                            DisplayName = `$key.DisplayName
-                            DisplayVersion = `$key.DisplayVersion
-                            PSChildName = `$key.PSChildName
-                        }
-                    }
-                }
+        `$keys = Get-ItemProperty `$path -ErrorAction SilentlyContinue | Where-Object {
+            (`$_.DisplayName -and `$_.DisplayName -like "*$DisplayName*") -or
+            (`$_.PSChildName -and (`$_.PSChildName -like "*$PackageId*" -or `$_.PSChildName -like "*$($PackageId.ToLower())*"))
+        }
+        foreach (`$key in `$keys) {
+            if (`$key.DisplayVersion) {
+                `$foundVersions += `$key.DisplayVersion
             }
         }
-    }
-    catch {
-        Write-Host "Error checking registry path `$regPath : `$_"
+    } catch {
+        Write-Host "Failed to inspect `$path: `$_"
     }
 }
 
-# Find the highest version among all matching installations
-if (`$allMatchingVersions.Count -gt 0) {
-    Write-Host "Found `$(`$allMatchingVersions.Count) matching installation(s)"
-    
-    if (`$allMatchingVersions.Count -eq 1) {
-        `$highestVersion = `$allMatchingVersions[0]
-        `$installedVersion = `$highestVersion['DisplayVersion']
-        `$found = `$true
-        Write-Host "Found version: `$installedVersion"
-    } else {
-        try {
-            `$sortedVersions = `$allMatchingVersions | Sort-Object -Property @{
-                Expression = {
-                    try {
-                        [version]`$_.DisplayVersion
-                    } catch {
-                        [version]"0.0.0"
-                    }
-                }
-            } -Descending
-            
-            if (`$sortedVersions -and `$sortedVersions.Count -gt 0) {
-                `$highestVersion = `$sortedVersions[0]
-                `$installedVersion = `$highestVersion['DisplayVersion']
-                `$found = `$true
-                Write-Host "Highest version found: `$installedVersion"
-            }
-        } catch {
-            Write-Host "Error during sorting: `$_, using first match"
-            `$highestVersion = `$allMatchingVersions[0]
-            `$installedVersion = `$highestVersion['DisplayVersion']
-            `$found = `$true
-        }
-    }
+if (`$foundVersions.Count -eq 0) {
+    Stop-Transcript
+    exit 1
 }
 
-# Verify version if found
-if (`$found) {
-    if (`$null -eq `$version -or `$version -eq "" -or `$version -eq "latest") {
-        Write-Host "`$packageId version `$installedVersion is installed, exiting with code 0"
+`$detectedVersion = (`$foundVersions | Sort-Object { try { [version]`$_ } catch { [version]'0.0.0' } } -Descending | Select-Object -First 1)
+if ([string]::IsNullOrWhiteSpace(`$expectedVersion) -or `$expectedVersion -eq 'latest') {
+    Stop-Transcript
+    exit 0
+}
+
+try {
+    if ([version]`$detectedVersion -ge [version]`$expectedVersion) {
         Stop-Transcript
-        Exit 0
+        exit 0
     }
-    
-    if (`$installedVersion -eq `$version) {
-        Write-Host "`$packageId version `$version is installed, exiting with code 0"
-        Stop-Transcript
-        Exit 0
-    }
-    
-    # Compare versions
-    try {
-        `$installedVer = [version]`$installedVersion
-        `$expectedVer = [version]`$version
-        
-        if (`$installedVer -ge `$expectedVer) {
-            Write-Host "`$packageId is installed with version `$installedVersion (equal or higher than expected `$version), exit code 0"
-            Stop-Transcript
-            Exit 0
-        }
-        else {
-            Write-Host "`$packageId is installed but version `$installedVersion is lower than expected `$version, exit code 1"
-            Stop-Transcript
-            Exit 1
-        }
-    }
-    catch {
-        if (`$installedVersion -ge `$version) {
-            Write-Host "`$packageId is installed with version `$installedVersion (equal or higher than expected `$version), exit code 0"
-            Stop-Transcript
-            Exit 0
-        }
-        else {
-            Write-Host "`$packageId is installed but version `$installedVersion is lower than expected `$version, exit code 1"
-            Stop-Transcript
-            Exit 1
-        }
-    }
+    Stop-Transcript
+    exit 1
 }
-
-Write-Host "`$packageId not detected in registry, exiting with code 1"
-Stop-Transcript
-Exit 1
+catch {
+    if (`$detectedVersion -ge `$expectedVersion) {
+        Stop-Transcript
+        exit 0
+    }
+    Stop-Transcript
+    exit 1
+}
 "@
+}
 
-$detectionScriptPath = Join-Path $versionDirectory "detection.ps1"
-$detectionScript | Set-Content -Path $detectionScriptPath -Encoding UTF8
-Write-Success "Created detection script: detection.ps1"
+function New-UninstallScript {
+    param([string]$PackageId, [string]$DisplayName)
+    return @"
+# Uninstall script for $DisplayName
+# Intune Win32 deployment script generated by AppGetter
 
-# Step 8: Create uninstall script
-Write-Step "Step 8: Creating uninstall script"
-$uninstallScript = @"
-# Uninstall script for $AppName
-# Uses registry to find and execute the uninstaller
+`$ErrorActionPreference = 'Stop'
+`$packageId = '$PackageId'
+`$displayName = '$DisplayName'
+`$logPath = "`$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\`$packageId-uninstall.log"
 
-`$packageId = "$packageId"
-`$action = "uninstall"
-`$displayName = "$AppName"
-
-# Start transcript for logging
-`$logPath = "`$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\`$packageId-`$action.log"
 Start-Transcript -Path `$logPath -Force
-Write-Host "Starting `$packageId `$action"
-
-# Registry paths to check
 `$registryPaths = @(
-    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
 )
 
 `$uninstallString = `$null
 `$quietUninstallString = `$null
-
-# Search for application uninstall string in registry
-foreach (`$regPath in `$registryPaths) {
-    try {
-        `$uninstallKeys = Get-ItemProperty `$regPath -ErrorAction SilentlyContinue | Where-Object {
-            `$_.DisplayName -like "*$AppName*" -or 
-            `$_.PSChildName -like "*$($packageId.ToLower())*" -or
-            `$_.PSChildName -like "*$($packageId)*"
-        }
-        
-        if (`$uninstallKeys) {
-            foreach (`$key in `$uninstallKeys) {
-                if (`$key.DisplayName -like "*$AppName*" -or `$key.DisplayName -eq `$AppName) {
-                    `$uninstallString = `$key.UninstallString
-                    `$quietUninstallString = `$key.QuietUninstallString
-                    Write-Host "Found uninstall string: `$uninstallString"
-                    break
-                }
-            }
-            if (`$uninstallString) { break }
-        }
-    }
-    catch {
-        Write-Host "Error checking registry path `$regPath : `$_"
+foreach (`$path in `$registryPaths) {
+    `$match = Get-ItemProperty `$path -ErrorAction SilentlyContinue | Where-Object {
+        (`$_.DisplayName -and `$_.DisplayName -like "*$DisplayName*") -or
+        (`$_.PSChildName -and (`$_.PSChildName -like "*$PackageId*" -or `$_.PSChildName -like "*$($PackageId.ToLower())*"))
+    } | Select-Object -First 1
+    if (`$match) {
+        `$uninstallString = `$match.UninstallString
+        `$quietUninstallString = `$match.QuietUninstallString
+        break
     }
 }
 
 if (-not `$uninstallString) {
-    Write-Host "Uninstall string not found in registry for `$packageId"
     Stop-Transcript
-    Exit 1
+    exit 1
 }
 
-# Prefer quiet uninstall if available
-`$uninstallCmd = if (`$quietUninstallString) { `$quietUninstallString } else { `$uninstallString }
-
-# For Nullsoft installers, add /S for silent uninstall if not already present
-if (`$uninstallCmd -notmatch "/S" -and `$uninstallCmd -match "\.exe") {
-    `$uninstallCmd = `$uninstallCmd -replace '"([^"]+\.exe)"', '"`$1" /S'
-    Write-Host "Added /S flag for silent uninstall"
+`$cmd = if (`$quietUninstallString) { `$quietUninstallString } else { `$uninstallString }
+if (`$cmd -notmatch '/S' -and `$cmd -match '\.exe') {
+    `$cmd = `$cmd -replace '"([^"]+\.exe)"', '"`$1" /S'
 }
+`$process = Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `$cmd" -Wait -PassThru -NoNewWindow
 
-Write-Host "Executing uninstall command: `$uninstallCmd"
-
-try {
-    `$process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `$uninstallCmd" -Wait -PassThru -NoNewWindow
-    
-    if (`$process.ExitCode -eq 0) {
-        Write-Host "Package `$packageId uninstalled successfully"
-        Stop-Transcript
-        Exit 0
-    }
-    else {
-        Write-Host "Uninstall returned exit code: `$(`$process.ExitCode)"
-        Stop-Transcript
-        Exit `$process.ExitCode
-    }
-}
-catch {
-    Write-Host "Error during uninstall: `$_"
+if (`$process.ExitCode -eq 0 -or `$process.ExitCode -eq 3010) {
     Stop-Transcript
-    Exit 1
+    exit 0
 }
+Stop-Transcript
+exit `$process.ExitCode
 "@
+}
 
+function Resolve-Icon {
+    param([string]$IconPath, [string]$WebsiteUrl, [string]$AppDirectory, [string]$VersionDirectory)
+    $logoPath = Join-Path $AppDirectory "logo.png"
+    $iconPathFinal = Join-Path $VersionDirectory "icon.png"
+
+    if ($IconPath -and (Test-Path $IconPath)) {
+        Copy-Item -Path $IconPath -Destination $logoPath -Force
+        Copy-Item -Path $IconPath -Destination $iconPathFinal -Force
+        return $iconPathFinal
+    }
+    if (Test-Path $logoPath) {
+        Copy-Item -Path $logoPath -Destination $iconPathFinal -Force
+        return $iconPathFinal
+    }
+
+    if (-not $WebsiteUrl) {
+        return $null
+    }
+
+    $faviconCandidates = @(
+        [System.Uri]::new([System.Uri]$WebsiteUrl, "/favicon.ico").AbsoluteUri,
+        [System.Uri]::new([System.Uri]$WebsiteUrl, "/favicon.png").AbsoluteUri
+    )
+    foreach ($candidate in $faviconCandidates) {
+        try {
+            Invoke-WebRequest -Uri $candidate -OutFile $logoPath -UseBasicParsing
+            Copy-Item -Path $logoPath -Destination $iconPathFinal -Force
+            return $iconPathFinal
+        } catch {
+            if (Test-Path $logoPath) {
+                Remove-Item $logoPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    return $null
+}
+
+function Get-ReadmeMarkdown {
+    param(
+        [string]$AppName,
+        [string]$PackageId,
+        [string]$Version,
+        [string]$Description,
+        [string]$Publisher,
+        [string]$WebsiteUrl,
+        [string]$InstallerFileName,
+        [string]$IntuneWinFileName,
+        [string]$InstallerHash,
+        [string]$RawInstallCommand,
+        [bool]$HasIcon
+    )
+
+    $intuneInstall = '%windir%\sysnative\windowspowershell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File install.ps1'
+    $intuneUninstall = '%windir%\sysnative\windowspowershell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1'
+    $generatedAt = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+    return @"
+# $AppName - Intune Win32 Package
+
+Generated by **AppGetter** on $generatedAt.
+
+## Application Description
+
+$Description
+
+## Intune Portal Upload Reference
+
+| Intune field | Value |
+|---|---|
+| **Display name** | $AppName |
+| **Description** | $Description |
+| **Publisher** | $Publisher |
+| **Version** | $Version |
+| **Package identifier** | ``$PackageId`` |
+| **Information URL** | $WebsiteUrl |
+| **Install command** | ``$intuneInstall`` |
+| **Uninstall command** | ``$intuneUninstall`` |
+| **Setup file** | ``$InstallerFileName`` |
+| **IntuneWin package** | ``$IntuneWinFileName`` |
+| **Installer SHA-256** | ``$InstallerHash`` |
+| **Detection method** | PowerShell script (registry-based version check) |
+| **Install behavior** | System |
+| **Device restart behavior** | Based on return code |
+| **Return codes** | 0, 1707 success; 3010, 1641 reboot; 1618 retry |
+| **Icon included** | $(if ($HasIcon) { "Yes (`icon.png`)" } else { "No" }) |
+
+## Package Contents
+
+- ``install.ps1`` silent installer wrapper.
+- ``detection.ps1`` registry detection script.
+- ``uninstall.ps1`` quiet uninstall script.
+- ``app.json`` metadata export.
+- ``win32LobApp.json`` Graph Win32 LOB template.
+- ``readme.txt`` plain text companion.
+
+## Raw Installer Command
+
+``````powershell
+$RawInstallCommand
+``````
+"@
+}
+
+Write-Step "Step 1: Resolving input values"
+$settings = Get-AppGetterSettings
+
+if (-not $AppName) {
+    $AppName = Read-Host "Enter application name"
+}
+if (-not $AppName) {
+    throw "AppName is required."
+}
+
+if (-not $OutputPath) {
+    $OutputPath = $settings.OutputPath
+}
+if (-not (Test-Path $OutputPath)) {
+    New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
+}
+
+$finalDownloadUrl = $DownloadUrl
+if (-not $finalDownloadUrl) {
+    if (-not $WebsiteUrl) {
+        throw "Provide either -DownloadUrl or -WebsiteUrl."
+    }
+    Write-Step "Step 2: Discovering installer URL from website"
+    $links = Get-DownloadLinksFromWeb -Url $WebsiteUrl
+    if (-not $links -or $links.Count -eq 0) {
+        throw "No installer links (.exe/.msi/.msix/.appx) were found at $WebsiteUrl."
+    }
+    $finalDownloadUrl = $links[0]
+    Write-Success "Resolved installer URL: $finalDownloadUrl"
+}
+
+$packageId = ($AppName -replace '[^a-zA-Z0-9\.-]', '.').Trim('.')
+if (-not $packageId) {
+    $packageId = ($AppName -replace '\s+', '')
+}
+$resolvedVersion = Resolve-Version -ExplicitVersion $Version -DownloadUrl $finalDownloadUrl -WebsiteUrl $WebsiteUrl
+$description = Resolve-Description -AppName $AppName -Publisher $Publisher -WebsiteUrl $WebsiteUrl
+if (-not $Publisher) { $Publisher = "Unknown" }
+if (-not $WebsiteUrl) { $WebsiteUrl = "" }
+
+Write-Step "Step 3: Creating output structure"
+$appDirectory = Join-Path $OutputPath $packageId
+$versionDirectory = Join-Path $appDirectory $resolvedVersion
+New-Item -ItemType Directory -Path $versionDirectory -Force | Out-Null
+
+Write-Step "Step 4: Downloading installer"
+$installerFileName = [System.IO.Path]::GetFileName(($finalDownloadUrl -split '\?')[0])
+if (-not $installerFileName) {
+    throw "Could not derive installer filename from URL."
+}
+$installerPath = Join-Path $versionDirectory $installerFileName
+Invoke-WebRequest -Uri $finalDownloadUrl -OutFile $installerPath -UseBasicParsing
+$installerFile = Get-Item $installerPath
+Write-Success "Downloaded $installerFileName"
+
+Write-Step "Step 5: Building commands and scripts"
+$rawInstallCommand = if ($InstallCommand) {
+    $InstallCommand
+} else {
+    Get-InstallerInstallCommand -InstallerFileName $installerFile.Name -InstallerExtension $installerFile.Extension
+}
+$installScript = New-InstallScript -PackageId $packageId -DisplayName $AppName -ExpectedVersion $resolvedVersion -RawInstallCommand $rawInstallCommand
+$detectionScript = New-DetectionScript -PackageId $packageId -DisplayName $AppName -ExpectedVersion $resolvedVersion
+$uninstallScript = New-UninstallScript -PackageId $packageId -DisplayName $AppName
+
+$installerHash = (Get-FileHash -Path $installerPath -Algorithm SHA256).Hash
+$iconFilePath = Resolve-Icon -IconPath $IconPath -WebsiteUrl $WebsiteUrl -AppDirectory $appDirectory -VersionDirectory $versionDirectory
+
+Write-Step "Step 6: Writing metadata and helper files"
+$installScriptPath = Join-Path $versionDirectory "install.ps1"
+$detectionScriptPath = Join-Path $versionDirectory "detection.ps1"
 $uninstallScriptPath = Join-Path $versionDirectory "uninstall.ps1"
+$readmePath = Join-Path $versionDirectory "README.md"
+$legacyReadmePath = Join-Path $versionDirectory "readme.txt"
+$appJsonPath = Join-Path $versionDirectory "app.json"
+$win32JsonPath = Join-Path $versionDirectory "win32LobApp.json"
+
+$installScript | Set-Content -Path $installScriptPath -Encoding UTF8
+$detectionScript | Set-Content -Path $detectionScriptPath -Encoding UTF8
 $uninstallScript | Set-Content -Path $uninstallScriptPath -Encoding UTF8
-Write-Success "Created uninstall script: uninstall.ps1"
 
-# Step 9: Handle icon file
-Write-Step "Step 9: Handling icon file"
-$iconFilePath = Join-Path $versionDirectory "icon.png"
-$logoFilePath = Join-Path $appDirectory "logo.png"
-$logoDownloaded = $false
+$intuneInstallCommand = '%windir%\sysnative\windowspowershell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File install.ps1'
+$intuneUninstallCommand = '%windir%\sysnative\windowspowershell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1'
+$intuneWinFileName = "$($installerFile.BaseName).intunewin"
+$hasIcon = ($iconFilePath -and (Test-Path $iconFilePath))
 
-if ($IconPath -and (Test-Path $IconPath)) {
-    Copy-Item -Path $IconPath -Destination $iconFilePath -Force
-    Write-Success "Copied icon from: $IconPath"
-} elseif (Test-Path $logoFilePath) {
-    Copy-Item -Path $logoFilePath -Destination $iconFilePath -Force
-    Write-Success "Copied logo.png from parent directory"
-} else {
-    # Try to download logo from website/developer pages
-    Write-Host "Attempting to download logo automatically..." -ForegroundColor Cyan
-    $urlsToTry = @()
-    if ($WebsiteUrl) { $urlsToTry += $WebsiteUrl }
-    if ($DeveloperUrl) { $urlsToTry += $DeveloperUrl }
-    
-    # Try website URL first, then developer URL
-    $logoDownloaded = Get-LogoFromWeb -WebsiteUrl $WebsiteUrl -DeveloperUrl $DeveloperUrl -AppName $AppName -OutputPath $logoFilePath -InstallerPath $installerPath
-    if ($logoDownloaded -and (Test-Path $logoFilePath)) {
-        Copy-Item -Path $logoFilePath -Destination $iconFilePath -Force
-        Write-Success "Downloaded and copied logo automatically"
-    }
-    
-    if (-not $logoDownloaded) {
-        Write-Host "No icon file found. You may need to add one manually." -ForegroundColor Yellow
-    }
-}
+$readmeMarkdown = Get-ReadmeMarkdown `
+    -AppName $AppName `
+    -PackageId $packageId `
+    -Version $resolvedVersion `
+    -Description $description `
+    -Publisher $Publisher `
+    -WebsiteUrl $WebsiteUrl `
+    -InstallerFileName $installerFile.Name `
+    -IntuneWinFileName $intuneWinFileName `
+    -InstallerHash $installerHash `
+    -RawInstallCommand $rawInstallCommand `
+    -HasIcon $hasIcon
+$readmeMarkdown | Set-Content -Path $readmePath -Encoding UTF8
 
-# Step 10: Create readme.txt
-Write-Step "Step 10: Creating readme.txt"
-# Use extracted description if available, otherwise create default
-if ([string]::IsNullOrWhiteSpace($foundDescription)) {
-    $description = "$AppName - Downloaded from web"
-    if (-not [string]::IsNullOrWhiteSpace($Publisher)) {
-        $description = "$AppName by $Publisher - Downloaded from web"
-    }
-} else {
-    $description = $foundDescription
-}
-
-$readmeContent = @"
-Package $packageId $foundVersion from Web Download
+@"
+Package $packageId $resolvedVersion from web download
 
 Display name: $AppName
-Version: $foundVersion
-Publisher: $(if ($Publisher) { $Publisher } else { "Unknown" })
-Website: $(if ($WebsiteUrl) { $WebsiteUrl } else { "N/A" })
+Version: $resolvedVersion
+Publisher: $Publisher
 Download URL: $finalDownloadUrl
+Install command: $intuneInstallCommand
+Uninstall command: $intuneUninstallCommand
 
-Install script:
-$installCommand
+See README.md for full Intune upload reference.
+"@ | Set-Content -Path $legacyReadmePath -Encoding UTF8
 
-Uninstall script:
-%windir%\sysnative\windowspowershell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1
-
-Description:
-$description
-
-Notes:
-- This package was created using AppGetter
-- Download URL: $finalDownloadUrl
-$(if ($DeveloperUrl) { "- Developer URL: $DeveloperUrl`n" })$(if ($SupportUrl) { "- Support/Documentation URL: $SupportUrl`n" })- Created: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-$(if ($installSwitchesInfo -and $installSwitchesInfo.BestPractices.Count -gt 0) { "`nInstall Information Found:`n" + ($installSwitchesInfo.BestPractices -join "`n") + "`n" })
-"@
-
-$readmePath = Join-Path $versionDirectory "readme.txt"
-$readmeContent | Set-Content -Path $readmePath -Encoding UTF8
-Write-Success "Created readme.txt"
-
-# Step 11: Create app.json
-Write-Step "Step 11: Creating app.json"
 $appJson = @{
     packageIdentifier = $packageId
     displayName = $AppName
     description = $description
-    version = $foundVersion
-    source = 3  # Web download
-    publisher = if ($Publisher) { $Publisher } else { "Unknown" }
-    informationUrl = if ($WebsiteUrl) { $WebsiteUrl } elseif ($DeveloperUrl) { $DeveloperUrl } else { "" }
-    publisherUrl = if ($DeveloperUrl) { $DeveloperUrl } elseif ($WebsiteUrl) { $WebsiteUrl } else { "" }
-    supportUrl = if ($SupportUrl) { $SupportUrl } elseif ($WebsiteUrl) { $WebsiteUrl } else { "" }
+    version = $resolvedVersion
+    source = 3
+    publisher = $Publisher
+    informationUrl = $WebsiteUrl
+    publisherUrl = $WebsiteUrl
+    supportUrl = $WebsiteUrl
     installerType = 7
     installerUrl = $finalDownloadUrl
     hash = $installerHash
-    installCommandLine = $installCommand
-    uninstallCommandLine = "%windir%\\sysnative\\windowspowershell\\v1.0\\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1"
-    installerFilename = $installerFileName
+    installCommandLine = $intuneInstallCommand
+    uninstallCommandLine = $intuneUninstallCommand
+    installerFilename = $installerFile.Name
     installerContext = 2
     architecture = 2
 }
-
-$appJsonPath = Join-Path $versionDirectory "app.json"
 $appJson | ConvertTo-Json -Depth 10 | Set-Content -Path $appJsonPath -Encoding UTF8
-Write-Success "Created app.json"
 
-# Step 12: Create win32LobApp.json
-Write-Step "Step 12: Creating win32LobApp.json"
 $detectionScriptBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($detectionScript))
-
-# Read icon file if it exists and convert to base64
 $iconBase64 = ""
-if (Test-Path $iconFilePath) {
-    try {
-        $iconBytes = [System.IO.File]::ReadAllBytes($iconFilePath)
-        $iconBase64 = [Convert]::ToBase64String($iconBytes)
-    } catch {
-        Write-Host "Warning: Could not read icon file for base64 encoding" -ForegroundColor Yellow
-    }
+if ($iconFilePath -and (Test-Path $iconFilePath)) {
+    $iconBase64 = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($iconFilePath))
 }
-
-$win32LobAppJson = @{
+$win32Json = @{
     "@odata.type" = "#microsoft.graph.win32LobApp"
     description = $description
-    developer = if ($Publisher) { $Publisher } else { "Unknown" }
+    developer = $Publisher
     displayName = $AppName
-    informationUrl = if ($WebsiteUrl) { $WebsiteUrl } elseif ($DeveloperUrl) { $DeveloperUrl } else { "" }
-    largeIcon = if ($iconBase64) {
-        @{
-            type = "image/png"
-            value = $iconBase64
-        }
-    } else {
-        $null
-    }
+    informationUrl = $WebsiteUrl
+    largeIcon = if ($iconBase64) { @{ type = "image/png"; value = $iconBase64 } } else { $null }
     notes = "Generated by AppGetter at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [Web|$packageId]"
-    publisher = if ($Publisher) { $Publisher } else { "Unknown" }
-    fileName = "$($installerFile.BaseName).intunewin"
+    publisher = $Publisher
+    fileName = $intuneWinFileName
     allowAvailableUninstall = $true
     applicableArchitectures = "x64"
     detectionRules = @(
@@ -1081,15 +591,13 @@ $win32LobAppJson = @{
             scriptContent = $detectionScriptBase64
         }
     )
-    displayVersion = $foundVersion
-    installCommandLine = $installCommand
+    displayVersion = $resolvedVersion
+    installCommandLine = $intuneInstallCommand
     installExperience = @{
         deviceRestartBehavior = "basedOnReturnCode"
         runAsAccount = "system"
     }
-    minimumSupportedOperatingSystem = @{
-        v10_2004 = $true
-    }
+    minimumSupportedOperatingSystem = @{ v10_2004 = $true }
     minimumSupportedWindowsRelease = "2004"
     returnCodes = @(
         @{ returnCode = 0; type = "success" }
@@ -1098,79 +606,53 @@ $win32LobAppJson = @{
         @{ returnCode = 1641; type = "hardReboot" }
         @{ returnCode = 1618; type = "retry" }
     )
-    setupFilePath = $installerFileName
-    uninstallCommandLine = "%windir%\\sysnative\\windowspowershell\\v1.0\\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1"
+    setupFilePath = $installerFile.Name
+    uninstallCommandLine = $intuneUninstallCommand
 }
+if (-not $iconBase64) { $win32Json.Remove("largeIcon") }
+$win32Json | ConvertTo-Json -Depth 10 | Set-Content -Path $win32JsonPath -Encoding UTF8
 
-# Remove null largeIcon if no icon
-if (-not $iconBase64) {
-    $win32LobAppJson.Remove('largeIcon')
-}
-
-$win32LobAppJsonPath = Join-Path $versionDirectory "win32LobApp.json"
-$win32LobAppJson | ConvertTo-Json -Depth 10 | Set-Content -Path $win32LobAppJsonPath -Encoding UTF8
-Write-Success "Created win32LobApp.json"
-
-# Step 13: Package with Content Prep Tool
-Write-Step "Step 13: Packaging with Content Prep Tool (intunewinapputil)"
-try {
-    $intunewinCmd = Get-Command intunewinapputil -ErrorAction SilentlyContinue
-    if (-not $intunewinCmd) {
-        throw "intunewinapputil not found. Is Content Prep Tool installed and in PATH?"
+Write-Step "Step 7: Creating .intunewin package"
+$packagingSucceeded = $false
+$intuneWinPath = Join-Path $appDirectory $intuneWinFileName
+$intuneWinCmd = Get-Command intunewinapputil -ErrorAction SilentlyContinue
+if (-not $intuneWinCmd) {
+    Write-Host "intunewinapputil was not found on PATH. Metadata files were still generated." -ForegroundColor Yellow
+} else {
+    if (Test-Path $intuneWinPath) {
+        Remove-Item -Path $intuneWinPath -Force
     }
-    
-    $outputDirectory = Split-Path $versionDirectory
-    $intunewinFile = Join-Path $outputDirectory "$($installerFile.BaseName).intunewin"
-    
-    if (Test-Path $intunewinFile) {
-        Remove-Item -Path $intunewinFile -Force
-        Write-Host "Removed existing intunewin file" -ForegroundColor Yellow
-    }
-    
-    Write-Host "Running: intunewinapputil -c `"$versionDirectory`" -s `"$installerFileName`" -o `"$outputDirectory`" -q"
-    
-    & intunewinapputil -c $versionDirectory -s $installerFileName -o $outputDirectory -q
-    
-    if ($LASTEXITCODE -eq 0 -and (Test-Path $intunewinFile)) {
-        Write-Success "Created IntuneWin package: $intunewinFile"
-        $fileInfo = Get-Item $intunewinFile
-        Write-Host "File size: $([math]::Round($fileInfo.Length / 1MB, 2)) MB" -ForegroundColor Green
+    & intunewinapputil -c $versionDirectory -s $installerFile.Name -o $appDirectory -q
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $intuneWinPath)) {
+        $packagingSucceeded = $true
+        Write-Success "Created package: $intuneWinPath"
     } else {
-        throw "Content Prep Tool failed or output file not found"
+        Write-Host "intunewinapputil returned an error. Verify the command output and retry." -ForegroundColor Yellow
     }
-    
-} catch {
-    Write-Error "Failed to create IntuneWin package: $_"
-    Write-Host "You can manually run: intunewinapputil -c `"$versionDirectory`" -s `"$installerFileName`" -o `"$outputDirectory`" -q" -ForegroundColor Yellow
 }
 
-# Summary
-Write-Step "Summary" "Green"
-Write-Host @"
-Package created successfully!
+Save-AppGetterSettings -OutputPath $OutputPath -LastPackageId $packageId
 
+Write-Step "Summary"
+Write-Host @"
 Package Details:
 - Application: $AppName
 - Package ID: $packageId
-- Version: $foundVersion
-- Publisher: $(if ($Publisher) { $Publisher } else { "Unknown" })
+- Version: $resolvedVersion
+- Publisher: $Publisher
 - Installer: $installerFileName
 - Download URL: $finalDownloadUrl
 - Output Directory: $versionDirectory
-- IntuneWin Package: $intunewinFile
+- IntuneWin Package: $(if ($packagingSucceeded) { $intuneWinPath } else { "(not created)" })
 
 Files Created:
-- detection.ps1 (Registry-based detection)
-- uninstall.ps1 (Uninstall script)
-- app.json (Application metadata)
-- win32LobApp.json (Intune app definition)
-- readme.txt (Documentation)
-- icon.png (Application icon, if available)
-- $installerFileName (Installer file)
-- $($installerFile.BaseName).intunewin (Intune package)
-
-Next Steps:
-1. Review the generated files in: $versionDirectory
-2. Test the detection script if needed
-3. Upload the .intunewin file to Intune
+- install.ps1
+- detection.ps1
+- uninstall.ps1
+- README.md
+- readme.txt
+- app.json
+- win32LobApp.json
+- icon.png (if available)
+- $installerFileName
 "@ -ForegroundColor Green
