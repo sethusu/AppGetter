@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AppGetter Installer Workbench</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="wallpaper"></div>
+    <main class="shell">
+      <header class="hero glass">
+        <div>
+          <p class="kicker">AppGetter 2.0</p>
+          <h1>Installer Workbench</h1>
+          <p class="subtitle">
+            Download, inspect, discover silent switches, and package installers from one
+            Windows 11-style experience.
+          </p>
+        </div>
+      </header>
+
+      <section class="grid">
+        <article class="card glass">
+          <h2>1) Download location</h2>
+          <label for="downloadLocation">Folder path for downloads/uploads</label>
+          <div class="row">
+            <input id="downloadLocation" placeholder="D:\Intoon In Progress" />
+            <button id="saveConfigBtn">Save</button>
+          </div>
+          <p class="hint">This location is used for URL downloads and uploaded installers.</p>
+        </article>
+
+        <article class="card glass">
+          <h2>2) Analyze installer from URL</h2>
+          <label for="downloadUrl">Installer URL</label>
+          <input id="downloadUrl" placeholder="https://example.com/setup.exe" />
+          <div class="row compact">
+            <label class="toggle">
+              <input type="checkbox" id="runtimeProbeForUrl" />
+              <span>Enable runtime probe (Windows only)</span>
+            </label>
+            <button id="analyzeUrlBtn">Download + Analyze</button>
+          </div>
+        </article>
+
+        <article class="card glass">
+          <h2>3) Analyze uploaded installer</h2>
+          <input id="uploadFile" type="file" />
+          <div class="row compact">
+            <label class="toggle">
+              <input type="checkbox" id="runtimeProbeForUpload" />
+              <span>Enable runtime probe (Windows only)</span>
+            </label>
+            <button id="analyzeUploadBtn">Upload + Analyze</button>
+          </div>
+        </article>
+
+        <article class="card glass">
+          <h2>4) Re-run switch discovery</h2>
+          <label for="installerPath">Installer path</label>
+          <input id="installerPath" placeholder="Filled automatically after analyze" />
+          <div class="row compact">
+            <label class="toggle">
+              <input type="checkbox" id="runtimeProbeForDiscover" />
+              <span>Enable runtime probe (Windows only)</span>
+            </label>
+            <button id="discoverBtn">Discover Switches</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="card glass">
+        <h2>5) Build Intune package via script</h2>
+        <div class="form-grid">
+          <label>App name <input id="appName" placeholder="MyApp" /></label>
+          <label>Publisher <input id="publisher" placeholder="Contoso Ltd." /></label>
+          <label>Website URL <input id="websiteUrl" placeholder="https://vendor.example" /></label>
+          <label>Download URL <input id="packageDownloadUrl" placeholder="https://vendor.example/setup.exe" /></label>
+          <label>Version <input id="version" placeholder="1.2.3" /></label>
+          <label>Output path <input id="outputPath" placeholder="D:\Intoon In Progress" /></label>
+          <label>Install command (optional)
+            <input id="installCommand" placeholder="&quot;setup.exe&quot; /VERYSILENT /NORESTART" />
+          </label>
+          <label>Icon path (optional)
+            <input id="iconPath" placeholder="C:\Icons\app.png" />
+          </label>
+        </div>
+        <div class="row right">
+          <button id="buildPackageBtn">Run Create-IntuneWinFromWeb.ps1</button>
+        </div>
+      </section>
+
+      <section class="card glass">
+        <h2>Results</h2>
+        <p id="statusLine">Ready.</p>
+        <pre id="resultPanel">{}</pre>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+

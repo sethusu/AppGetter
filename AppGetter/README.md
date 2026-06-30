@@ -12,6 +12,9 @@ This tool automates the creation of IntuneWin packages from web-based applicatio
 - ✅ Complete metadata file generation (app.json, win32LobApp.json)
 - ✅ Automatic version detection from website
 - ✅ Smart installer type detection (EXE, MSI, MSIX, APPX)
+- ✅ Silent switch discovery engine (known mappings, installer metadata research, optional runtime probing)
+- ✅ Configurable download/upload location via API and UI
+- ✅ Windows 11-style web workbench tied to `Create-IntuneWinFromWeb.ps1`
 - ✅ Icon file handling
 - ✅ Proper installer filename handling
 - ✅ Version included in readme.txt
@@ -21,6 +24,34 @@ This tool automates the creation of IntuneWin packages from web-based applicatio
 1. **Content Prep Tool** - Must be installed and accessible via `intunewinapputil` command
 2. **PowerShell** - Version 5.1 or later
 3. **Internet Access** - Required to download installers from websites
+4. **Python** - 3.10+ for the backend/UI service (`pip install -r requirements.txt`)
+
+## Web Workbench (Backend + Windows 11 UI)
+
+AppGetter now includes a local backend service and modern browser UI for day-to-day packaging work.
+
+### Start the workbench
+
+```bash
+pip install -r requirements.txt
+uvicorn appgetter_ui_backend.server:app --host 0.0.0.0 --port 8000
+```
+
+Then open:
+
+```
+http://localhost:8000
+```
+
+### What the workbench adds
+
+1. **User-defined download location** for both URL downloads and uploaded installers.
+2. **Installer analysis** that identifies installer type/engine and reports SHA256.
+3. **Silent switch discovery** in this order:
+   - Known switch mappings by installer type/engine.
+   - Research from installer metadata/signatures.
+   - Optional runtime probe (`/?`, `--help`, etc.) when running on Windows.
+4. **PowerShell script orchestration** so users can run `Create-IntuneWinFromWeb.ps1` directly from the UI.
 
 ## Usage
 
