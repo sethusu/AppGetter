@@ -1,0 +1,108 @@
+{
+  "frameworks": {
+    "msi": {
+      "displayName": "Windows Installer (MSI)",
+      "extensions": [".msi"],
+      "signatures": [],
+      "silentSwitches": [
+        { "switch": "/quiet", "confidence": "high", "description": "Silent install with no UI" },
+        { "switch": "/qn", "confidence": "high", "description": "Silent install (no UI)" },
+        { "switch": "/passive", "confidence": "high", "description": "Unattended install with progress bar only" },
+        { "switch": "/qb", "confidence": "medium", "description": "Basic UI with progress bar" }
+      ],
+      "installCommandTemplate": "msiexec /i \"{file}\" /quiet /norestart",
+      "helpSwitches": ["/?", "/help"]
+    },
+    "nsis": {
+      "displayName": "NSIS (Nullsoft Scriptable Install System)",
+      "extensions": [".exe"],
+      "signatures": ["Nullsoft", "NSIS"],
+      "silentSwitches": [
+        { "switch": "/S", "confidence": "high", "description": "Silent install" },
+        { "switch": "/SILENT", "confidence": "medium", "description": "Silent install (some NSIS variants)" }
+      ],
+      "installCommandTemplate": "\"{file}\" /S",
+      "helpSwitches": ["/?", "/help", "/S /?"]
+    },
+    "inno": {
+      "displayName": "Inno Setup",
+      "extensions": [".exe"],
+      "signatures": ["Inno Setup", "InnoSetup"],
+      "silentSwitches": [
+        { "switch": "/VERYSILENT", "confidence": "high", "description": "Completely silent install" },
+        { "switch": "/SILENT", "confidence": "high", "description": "Silent install with progress bar" },
+        { "switch": "/SUPPRESSMSGBOXES", "confidence": "medium", "description": "Suppress message boxes (use with SILENT)" },
+        { "switch": "/NORESTART", "confidence": "medium", "description": "Prevent restart" },
+        { "switch": "/SP-", "confidence": "medium", "description": "Disable startup prompt" }
+      ],
+      "installCommandTemplate": "\"{file}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
+      "helpSwitches": ["/?", "/help", "/?"]
+    },
+    "installshield": {
+      "displayName": "InstallShield",
+      "extensions": [".exe"],
+      "signatures": ["InstallShield", "setup.exe"],
+      "silentSwitches": [
+        { "switch": "/s", "confidence": "high", "description": "Silent install" },
+        { "switch": "/silent", "confidence": "high", "description": "Silent install" },
+        { "switch": "/v\"/qn\"", "confidence": "medium", "description": "Silent via embedded MSI" }
+      ],
+      "installCommandTemplate": "\"{file}\" /s /v\"/qn\"",
+      "helpSwitches": ["/?", "/help"]
+    },
+    "wise": {
+      "displayName": "Wise Installer",
+      "extensions": [".exe"],
+      "signatures": ["Wise Installation"],
+      "silentSwitches": [
+        { "switch": "/s", "confidence": "high", "description": "Silent install" }
+      ],
+      "installCommandTemplate": "\"{file}\" /s",
+      "helpSwitches": ["/?"]
+    },
+    "squirrel": {
+      "displayName": "Squirrel (Electron/Atom)",
+      "extensions": [".exe"],
+      "signatures": ["Squirrel"],
+      "silentSwitches": [
+        { "switch": "--silent", "confidence": "high", "description": "Silent install" }
+      ],
+      "installCommandTemplate": "\"{file}\" --silent",
+      "helpSwitches": ["--help", "/?"]
+    },
+    "burn": {
+      "displayName": "WiX Burn Bundle",
+      "extensions": [".exe"],
+      "signatures": ["Burn", "WiX Toolset"],
+      "silentSwitches": [
+        { "switch": "/quiet", "confidence": "high", "description": "Silent install" },
+        { "switch": "/passive", "confidence": "medium", "description": "Passive install" }
+      ],
+      "installCommandTemplate": "\"{file}\" /quiet",
+      "helpSwitches": ["/?", "/help"]
+    },
+    "msix": {
+      "displayName": "MSIX / APPX Package",
+      "extensions": [".msix", ".appx", ".appxbundle", ".msixbundle"],
+      "signatures": [],
+      "silentSwitches": [
+        { "switch": "Add-AppxPackage", "confidence": "high", "description": "PowerShell deployment (no switches needed)" }
+      ],
+      "installCommandTemplate": "Add-AppxPackage -Path \"{file}\"",
+      "helpSwitches": []
+    },
+    "generic_exe": {
+      "displayName": "Generic EXE Installer",
+      "extensions": [".exe"],
+      "signatures": [],
+      "silentSwitches": [
+        { "switch": "/S", "confidence": "low", "description": "Common NSIS-style silent flag" },
+        { "switch": "/silent", "confidence": "low", "description": "Common silent flag" },
+        { "switch": "/quiet", "confidence": "low", "description": "Common quiet flag" },
+        { "switch": "/VERYSILENT", "confidence": "low", "description": "Inno Setup style" }
+      ],
+      "installCommandTemplate": "\"{file}\" /S",
+      "helpSwitches": ["/?", "/help", "-h", "--help"]
+    }
+  }
+}
