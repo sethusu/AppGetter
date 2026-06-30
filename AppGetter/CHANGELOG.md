@@ -1,5 +1,28 @@
 # AppGetter Changelog
 
+## Version 2.0 - 2026-06-30
+
+### WinGetter-style rewrite (PowerShell-only)
+
+#### Added
+- Modular PowerShell architecture (`AppGetter.psd1`, `AppGetter.psm1`, `Private/`)
+- WPF GUI with live progress, download link picker, and icon picker (`Gui/`)
+- `install.ps1` wrapper with Intune return codes (matching WinGetter behavior)
+- `README.md` Intune portal upload cheat sheet per package
+- Settings persistence in `%AppData%\AppGetter\settings.json`
+- `Test-AppGetterPrerequisites` for Content Prep Tool validation
+- Packaging failure log: `appgetter-packaging.log`
+
+#### Removed
+- Python Flask backend (`backend/`)
+- Browser-based web dashboard (`ui/`)
+- `requirements.txt` and `Start-AppGetter.ps1` Python launcher
+
+#### Changed
+- CLI entry point delegates to `Invoke-AppGetterPackaging` module function
+- Intune install/uninstall commands now use `install.ps1` / `uninstall.ps1` wrappers
+- Default output path: `Documents\AppGetter Output`
+
 ## Version 1.0 - 2026-01-23
 
 ### Initial Release
