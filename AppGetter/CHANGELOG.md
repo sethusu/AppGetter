@@ -1,5 +1,18 @@
 # AppGetter Changelog
 
+## Version 1.1 - 2026-06-30
+
+### WinGetter-Style PowerShell Rewrite
+
+- Removed Python/Flask runtime dependency from the launch path.
+- Added desktop PowerShell GUI entry at `Gui/Start-AppGetterGui.ps1`.
+- Updated `Start-AppGetter.ps1` to launch GUI by default.
+- Updated `Create-IntuneWinFromWeb.ps1` so no-argument execution launches GUI (`-UseGui` supported).
+- Added prerequisite validation for `intunewinapputil` before packaging.
+- Added persisted output-folder settings (`%AppData%\AppGetter\settings.json` fallback supported).
+- Added generated `install.ps1` wrapper and switched metadata commands to install/uninstall script wrappers.
+- Added generated `README.md` inside each version folder to match WinGetter artifact conventions.
+
 ## Version 1.0 - 2026-01-23
 
 ### Initial Release

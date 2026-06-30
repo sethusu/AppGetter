@@ -1,11 +1,13 @@
 # Example usage script for AppGetter
-# This file demonstrates various ways to use the Create-IntuneWinFromWeb.ps1 script
+# This file demonstrates WinGetter-style GUI + CLI usage
 
-# Example 1: Basic usage with website URL (Interactive)
-Write-Host "Example 1: Interactive mode" -ForegroundColor Cyan
+# Example 1: Launch desktop GUI (recommended)
+Write-Host "Example 1: Launch GUI" -ForegroundColor Cyan
+# .\Start-AppGetter.ps1
+# or
 # .\Create-IntuneWinFromWeb.ps1
 
-# Example 2: SIMION with website URL
+# Example 2: SIMION with website URL (CLI)
 Write-Host "`nExample 2: SIMION from website" -ForegroundColor Cyan
 .\Create-IntuneWinFromWeb.ps1 `
     -WebsiteUrl "https://simion.com/" `
@@ -50,8 +52,12 @@ Write-Host "`nExample 7: Custom install command" -ForegroundColor Cyan
 #     -InstallCommand '"setup.exe" /VERYSILENT /SUPPRESSMSGBOXES' `
 #     -Publisher "CustomPublisher"
 
-# Example 8: MSI installer
-Write-Host "`nExample 8: MSI installer" -ForegroundColor Cyan
+# Example 8: Force GUI with switch
+Write-Host "`nExample 8: Force GUI" -ForegroundColor Cyan
+# .\Create-IntuneWinFromWeb.ps1 -UseGui
+
+# Example 9: MSI installer
+Write-Host "`nExample 9: MSI installer" -ForegroundColor Cyan
 # .\Create-IntuneWinFromWeb.ps1 `
 #     -DownloadUrl "https://example.com/installer.msi" `
 #     -AppName "MSIApp" `
