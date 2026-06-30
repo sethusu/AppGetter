@@ -1,5 +1,16 @@
 # AppGetter Changelog
 
+## Version 2.0 - 2026-06-30
+
+### Major Rewrite (WinGetter-style, PowerShell-only)
+
+- Reworked `Create-IntuneWinFromWeb.ps1` into a PowerShell-only packaging flow that mirrors WinGetter outputs.
+- Added generation of `install.ps1` alongside `detection.ps1` and `uninstall.ps1`.
+- Added markdown `README.md` output with field-by-field Intune upload reference.
+- Added AppGetter settings persistence for default output path and last package ID.
+- Removed Python Flask backend/UI and `requirements.txt`.
+- Updated launcher script and project docs for the new non-Python workflow.
+
 ## Version 1.0 - 2026-01-23
 
 ### Initial Release
