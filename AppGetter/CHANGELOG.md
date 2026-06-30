@@ -1,5 +1,19 @@
 # AppGetter Changelog
 
+## Version 2.0 - 2026-06-30
+
+### Backend, Silent Switch Discovery, and Desktop UI
+
+#### Features
+- **Configurable download location** — persistent settings in `%LOCALAPPDATA%\AppGetter\config.json`
+- **Silent switch analysis** — detects MSI, NSIS, Inno Setup, InstallShield, WiX, and generic EXE frameworks
+- **Switch discovery pipeline** — web documentation research, installer help probing, optional live testing
+- **ASP.NET Core API** — REST backend at `http://localhost:5050` with Swagger
+- **WinUI 3 desktop app** — Windows 11-style UI with Settings, Installer Analysis, and Home pages
+- **PowerShell modules** — `AppGetter.Config`, `AppGetter.SilentSwitch`, `AppGetter.Core`
+- **CLI integration** — `Create-IntuneWinFromWeb.ps1` uses switch analysis when modules are present
+- **Launcher scripts** — `Start-AppGetter.ps1`, `Start-AppGetterApi.ps1`, `Test-InstallerSwitches.ps1`
+
 ## Version 1.0 - 2026-01-23
 
 ### Initial Release

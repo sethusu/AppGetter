@@ -1,0 +1,45 @@
+<Page
+    x:Class="AppGetter.App.Views.HomePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Padding="{StaticResource PagePadding}">
+        <StackPanel Spacing="16" MaxWidth="960">
+            <TextBlock Text="AppGetter" Style="{StaticResource PageTitleStyle}" />
+            <TextBlock
+                Text="Create Intune Win32 packages with automatic silent install switch discovery."
+                Foreground="{StaticResource SubtleTextBrush}"
+                TextWrapping="Wrap" />
+
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Quick start" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock TextWrapping="Wrap">
+                        1. Configure your download and output folders in Settings.
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap">
+                        2. Use Installer Analysis to download or upload an installer.
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap">
+                        3. Review detected silent switches, run discovery if needed, then build your package.
+                    </TextBlock>
+                    <Button
+                        Content="Open Installer Analysis"
+                        Style="{StaticResource PrimaryActionButtonStyle}"
+                        Click="OpenInstaller_Click"
+                        HorizontalAlignment="Left" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Silent install intelligence" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource SubtleTextBrush}">
+                        AppGetter detects installer frameworks (MSI, NSIS, Inno Setup, InstallShield, WiX),
+                        researches documentation, probes help output, and can test candidate switches.
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>
