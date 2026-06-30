@@ -1,305 +1,200 @@
-# AppGetter - IntuneWin Package Creator from Web Downloads
+# AppGetter — Intune Win32 packages from web downloads
 
-This tool automates the creation of IntuneWin packages from web-based application downloads with registry-based detection.
+**Turn web-based application installers into Intune Win32 packages in minutes.**
 
-## Features
+AppGetter automates the tedious parts of packaging desktop software for Microsoft Intune: downloading the installer from a website or direct URL, generating `install.ps1` / `detection.ps1` / `uninstall.ps1`, resolving an app icon, building the `.intunewin` file with the Microsoft Win32 Content Prep Tool, and writing a field-by-field Intune upload guide.
 
-- ✅ Interactive input dialog for website URL and application details
-- ✅ Automatic download link discovery from websites
-- ✅ Registry-based detection script (no external dependencies)
-- ✅ Automatic uninstall script generation
-- ✅ Content Prep Tool integration
-- ✅ Complete metadata file generation (app.json, win32LobApp.json)
-- ✅ Automatic version detection from website
-- ✅ Smart installer type detection (EXE, MSI, MSIX, APPX)
-- ✅ Icon file handling
-- ✅ Proper installer filename handling
-- ✅ Version included in readme.txt
-- ✅ Backend API for download location configuration, installer upload/download, and package creation
-- ✅ Silent switch intelligence that can identify known switches, research documentation pages, and optionally probe installer help output (Windows hosts)
-- ✅ Modern Windows 11-style web dashboard tied to the packaging script
+Built for IT admins and packaging teams who want repeatable Win32 app onboarding without hand-writing detection scripts for every app.
 
-## Web Control Center (Backend + Windows 11 UI)
+---
 
-AppGetter now includes a browser-based control center powered by Flask.
+## What you get
 
-### What it adds
+For each application, AppGetter produces:
 
-- Configure a default download/output location through an API/UI.
-- Upload installer files or download installers by URL.
-- Analyze installer files for known/discovered silent install switches.
-- Launch `Create-IntuneWinFromWeb.ps1` from the dashboard.
+| Output | Purpose |
+|--------|---------|
+| `{Installer}.intunewin` | Upload this to the Intune admin center |
+| `install.ps1` | Silent install wrapper with Intune return codes |
+| `detection.ps1` | Registry-based detection (no external dependencies on devices) |
+| `uninstall.ps1` | Quiet uninstall from registry uninstall string |
+| `README.md` | Copy/paste reference for every Intune portal field |
+| `logo.png` / `icon.png` | App icon for Intune upload |
+| `app.json` / `win32LobApp.json` | Metadata exports |
 
-### Start the backend
+---
 
-```bash
-python -m pip install -r requirements.txt
-python backend/app.py
-```
+## Requirements
 
-### One-command PowerShell launcher
+| Requirement | Notes |
+|-------------|-------|
+| **Windows 10/11** | PowerShell 5.1 or later |
+| **[Win32 Content Prep Tool](https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool)** | `intunewinapputil` must be on your PATH |
+| **Internet access** | Required to download installers from the web |
 
-From the `AppGetter` folder:
+Run the built-in check from PowerShell:
 
 ```powershell
-pwsh -NoProfile -File .\Start-AppGetter.ps1
+cd AppGetter
+Import-Module .\AppGetter.psd1
+Test-AppGetterPrerequisites
 ```
 
-Optional flags:
+---
 
-- `-Port 8770` to run on a custom port
-- `-SkipDependencyInstall` to skip `pip install`
-- `-NoBrowser` to prevent opening a browser window
+## Quick start (GUI — recommended)
 
-Then open:
-
-```text
-http://localhost:8765
-```
-
-### API endpoints
-
-- `GET /api/config/download-location` - read configured output path
-- `PUT /api/config/download-location` - update output path
-- `POST /api/installers/upload` - upload an installer file
-- `POST /api/installers/download` - download installer by URL
-- `POST /api/installers/analyze` - detect/research/probe silent switches
-- `POST /api/packages/create` - run `Create-IntuneWinFromWeb.ps1`
-
-## Prerequisites
-
-1. **Content Prep Tool** - Must be installed and accessible via `intunewinapputil` command
-2. **PowerShell** - Version 5.1 or later
-3. **Internet Access** - Required to download installers from websites
-
-## Usage
-
-### Interactive Mode (Recommended)
-
-Simply run the script without parameters to open input dialogs:
+1. Open **PowerShell** on a Windows machine with the Content Prep Tool installed.
+2. Run:
 
 ```powershell
+cd AppGetter
 .\Create-IntuneWinFromWeb.ps1
 ```
 
-Dialog boxes will appear prompting you to enter:
-- Website URL (e.g., "https://simion.com/")
-- Application Name (e.g., "SIMION")
-
-### Command Line Usage
-
-#### Basic Usage with Website URL
+Or launch the GUI directly:
 
 ```powershell
+.\Gui\Start-AppGetterGui.ps1
+```
+
+3. Enter the **application name**, a **website URL** or **direct download URL**, and an **output folder**.
+4. Optionally fill in publisher, version, developer URL, and support URL.
+5. Click **Create Package** and wait for the progress steps to finish.
+6. If multiple icons were found, pick the best match in the **icon picker** dialog.
+7. Open the output folder and upload the `.intunewin` to Intune using the included `README.md` as your field guide.
+
+---
+
+## Quick start (CLI)
+
+For scripting or automation:
+
+```powershell
+cd AppGetter
+
+# Package from a website (scans for download links)
 .\Create-IntuneWinFromWeb.ps1 -WebsiteUrl "https://simion.com/" -AppName "SIMION" -Publisher "Adaptas Solutions, LLC"
+
+# Direct download URL
+.\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/setup.exe" -AppName "MyApp" -Version "1.0.0"
+
+# Custom output path and icon
+.\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/app.msi" -AppName "MyApp" `
+    -OutputPath "C:\IntunePackages" `
+    -IconPath "C:\Icons\myapp.png"
 ```
 
-#### With Direct Download URL
+---
 
-```powershell
-.\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/installer.exe" -AppName "MyApp" -Version "1.0.0"
-```
+## Typical Intune workflow
 
-#### With Specific Version
+1. **Package** the app with AppGetter on a Windows machine that has the Content Prep Tool.
+2. **Review** the generated `README.md` in the version folder — it lists install command, detection method, publisher, description, and return codes.
+3. **Upload** the `.intunewin` file in **Intune** → **Apps** → **Windows** → **Add** → **Windows app (Win32)**.
+4. **Fill in** portal fields using the generated reference (or `win32LobApp.json` as a starting point).
+5. **Assign** the app to a test group before broad rollout.
+6. **Validate** on a pilot device — check `%ProgramData%\Microsoft\IntuneManagementExtension\Logs\` or `%ProgramData%\Microsoft\IntuneManagementExtension\Logs\` for install/detection logs.
 
-```powershell
-.\Create-IntuneWinFromWeb.ps1 -WebsiteUrl "https://simion.com/" -AppName "SIMION" -Version "8.2.1.3"
-```
+---
 
-#### With Custom Output Path
-
-```powershell
-.\Create-IntuneWinFromWeb.ps1 -WebsiteUrl "https://simion.com/" -AppName "SIMION" -OutputPath "C:\IntunePackages"
-```
-
-#### With Custom Icon
-
-```powershell
-.\Create-IntuneWinFromWeb.ps1 -WebsiteUrl "https://simion.com/" -AppName "SIMION" -IconPath "C:\Icons\simion-icon.png"
-```
-
-#### With Custom Install Command
-
-```powershell
-.\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/setup.exe" -AppName "MyApp" -InstallCommand '"setup.exe" /SILENT /NORESTART'
-```
-
-## Parameters
-
-- **WebsiteUrl** (Optional): The URL of the website containing the download link
-  - Example: `"https://simion.com/"`
-  - Script will attempt to find download links on this page
-  
-- **DownloadUrl** (Optional): Direct download URL if known
-  - If provided, script will skip website scanning and download directly
-  - Example: `"https://example.com/installer.exe"`
-  
-- **AppName** (Optional): The name of the application
-  - If not provided, an input dialog will appear
-  - Example: `"SIMION"`, `"MyApplication"`
-  
-- **Version** (Optional): Specific version to use
-  - If not specified, script will attempt to extract from website or use "latest"
-  - Example: `"8.2.1.3"`, `"1.0.0"`
-  
-- **Publisher** (Optional): Publisher name
-  - Example: `"Adaptas Solutions, LLC"`, `"Microsoft Corporation"`
-  
-- **OutputPath** (Optional): Base directory for output. Default: `"D:\Intoon In Progress"`
-  - Packages will be created in: `{OutputPath}\{PackageId}\{Version}\`
-  
-- **IconPath** (Optional): Path to icon file (PNG format recommended)
-  - If not provided, script will look for `logo.png` in the parent directory
-  - If neither found, package will be created without icon
-  
-- **InstallCommand** (Optional): Custom install command
-  - If not provided, script will auto-detect based on installer type:
-    - MSI: `msiexec /i "installer.msi" /quiet /norestart`
-    - MSIX/APPX: `Add-AppxPackage -Path "installer.msix"`
-    - EXE: `"installer.exe" /S`
-
-## What the Script Does
-
-1. **Finds Download Links** - Scans the website for download links (if WebsiteUrl provided)
-2. **Downloads** the installer with proper filename
-3. **Detects Version** - Attempts to extract version information from website
-4. **Creates detection.ps1** - Registry-based detection script
-5. **Creates uninstall.ps1** - Uninstall script that finds and executes the uninstaller
-6. **Handles icon files** - Copies icon to package directory if available
-7. **Creates metadata files**:
-   - `readme.txt` - Documentation
-   - `app.json` - Application metadata
-   - `win32LobApp.json` - Intune app definition with detection script
-8. **Packages with Content Prep Tool** - Creates the final `.intunewin` file
-
-## Output Structure
+## Output folder layout
 
 ```
-{OutputPath}/
-└── {PackageId}/
-    ├── logo.png (optional, if exists)
-    └── {Version}/
-        ├── {InstallerFileName}.exe
+Documents\AppGetter Output\
+└── SIMION\
+    ├── logo.png
+    └── 8.2.1.3\
+        ├── simion-setup.exe
+        ├── install.ps1
         ├── detection.ps1
         ├── uninstall.ps1
+        ├── README.md
+        ├── readme.txt
         ├── app.json
         ├── win32LobApp.json
-        ├── readme.txt
         ├── icon.png
-        └── {InstallerFileName}.intunewin (created in parent directory)
+        ├── .icon-candidates\
+        └── ..\simion-setup.intunewin
 ```
 
-## Detection Script
+Default output path and last-used settings are saved to:
 
-The detection script uses **registry-based detection** instead of external dependencies, making it reliable for Intune deployments:
+`%AppData%\AppGetter\settings.json`
 
-- Checks `HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*`
-- Checks `HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*`
-- Verifies version matches or is higher than expected
-- Returns appropriate exit codes for Intune
-- Handles multiple installations and selects the highest version
+---
 
-## Uninstall Script
+## GUI features
 
-The uninstall script:
-- Searches registry for uninstall string
-- Prefers quiet uninstall if available
-- Adds `/S` flag for Nullsoft installers if needed
-- Executes uninstall and returns proper exit codes
+- **Website link discovery** with a picker when multiple download links are found
+- **Live progress** — step list, progress bar, and log panel
+- **Icon preview** when a custom icon is selected
+- **Icon picker after packaging** — choose among up to 3 downloaded icon candidates
+- **Custom icon** — browse for your own PNG before packaging
+- **Open output folder** when done
 
-## Examples
+---
 
-### Example 1: SIMION
+## Parameters (CLI)
+
+| Parameter | Description |
+|-----------|-------------|
+| `-WebsiteUrl` | Page to scan for download links |
+| `-DownloadUrl` | Direct installer URL (skips website scan) |
+| `-AppName` | Application display name |
+| `-Version` | Version string (auto-detected from website if omitted) |
+| `-Publisher` | Publisher name |
+| `-DeveloperUrl` | Developer/publisher site (helps icon and description discovery) |
+| `-SupportUrl` | Support/docs page (helps silent switch discovery) |
+| `-OutputPath` | Base output folder (default: saved settings path) |
+| `-IconPath` | Custom PNG icon |
+| `-InstallCommand` | Override auto-detected install command |
+| `-UseGui` | Launch the WPF GUI |
+
+---
+
+## Repository layout
+
+```
+AppGetter/
+├── Create-IntuneWinFromWeb.ps1   ← CLI entry point (no args = GUI)
+├── AppGetter.psd1 / AppGetter.psm1
+├── Private/                      ← Packaging, web download, icons, scripts
+├── Gui/
+│   ├── Start-AppGetterGui.ps1
+│   └── *.xaml                    ← WPF UI
+├── Example-Usage.ps1
+└── README.md
+```
+
+---
+
+## PowerShell module (advanced)
 
 ```powershell
-.\Create-IntuneWinFromWeb.ps1 -WebsiteUrl "https://simion.com/" -AppName "SIMION" -Publisher "Adaptas Solutions, LLC"
+Import-Module .\AppGetter.psd1
+
+Get-WebDownloadLinks -WebsiteUrl 'https://example.com/download'
+Invoke-AppGetterPackaging -AppName 'MyApp' -DownloadUrl 'https://example.com/setup.exe' -OutputPath 'C:\Out'
 ```
 
-### Example 2: Direct Download URL
-
-```powershell
-.\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/app-installer.exe" -AppName "MyApp" -Version "2.0.0" -Publisher "MyCompany"
-```
-
-### Example 3: Custom Install Command
-
-```powershell
-.\Create-IntuneWinFromWeb.ps1 `
-    -DownloadUrl "https://example.com/setup.exe" `
-    -AppName "CustomApp" `
-    -InstallCommand '"setup.exe" /VERYSILENT /SUPPRESSMSGBOXES' `
-    -Publisher "CustomPublisher"
-```
+---
 
 ## Troubleshooting
 
-### "No download links found on the website"
-- The script may not have found download links using its pattern matching
-- **Solution**: Provide a direct `-DownloadUrl` parameter instead
-- Check the website manually to find the direct download link
+| Problem | What to try |
+|---------|-------------|
+| `intunewinapputil` not found | Install the [Content Prep Tool](https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool) and add it to PATH |
+| No download links found | Use **Find Links** in the GUI or pass `-DownloadUrl` with a direct installer URL |
+| Packaging failed | Check `appgetter-packaging.log` in the version output folder and the GUI log panel |
+| Wrong icon | Use the icon picker after packaging, or set a custom PNG before packaging |
+| Detection fails on devices | Run `detection.ps1` locally; review Intune Management Extension logs |
+| GUI won't start | Run from PowerShell 5.1+ on Windows; WPF requires a desktop session |
 
-### "intunewinapputil not found"
-- Install Microsoft Win32 Content Prep Tool
-- Ensure it's in your PATH or use full path
-- Check if the alias is set: `Get-Command intunewinapputil`
+See also [Troubleshooting-Guide.md](Troubleshooting-Guide.md).
 
-### "Could not find downloaded installer file"
-- Check the download directory for the file
-- Verify the download URL is accessible
-- Check file permissions
-- Some websites may require authentication or have download restrictions
-
-### Detection script not working
-- Verify the app is actually installed
-- Check registry keys manually: `Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" | Where-Object { $_.DisplayName -like "*AppName*" }`
-- Review detection script logs in: `%ProgramData%\Microsoft\IntuneManagementExtension\Logs\`
-- Test detection script manually: `powershell -ExecutionPolicy Bypass -File detection.ps1` (should exit with code 0 if installed)
-
-### Version extraction failed
-- The script attempts to extract version from the website HTML
-- If extraction fails, version will default to "latest"
-- **Solution**: Provide `-Version` parameter explicitly
-
-### Download requires authentication
-- Some websites require login or have download restrictions
-- **Solution**: 
-  1. Download the installer manually
-  2. Place it in the version directory
-  3. Run the script with `-DownloadUrl` pointing to a local file path (if supported) or skip download step
-
-## Notes
-
-- The script assumes silent install with `/S` flag for EXE files. Adjust `installCommandLine` in JSON files if different flags are needed.
-- Icon files should be PNG format for best compatibility with Intune.
-- The script will overwrite existing files in the version directory.
-- IntuneWin files are created in the parent directory (same level as version folder).
-- **Download Link Discovery**: The script uses pattern matching to find download links. It looks for:
-  - Links ending in `.exe`, `.msi`, `.msix`, `.appx`
-  - Links containing "download", "install", or "setup" in the URL
-  - Direct download URLs in page content
-- **Version Detection**: The script attempts to extract version numbers from the website HTML using common patterns. If extraction fails, you can provide the version explicitly.
-
-## SIMION-Specific Notes
-
-For SIMION specifically:
-- **Latest Version**: SIMION 8.2.1.3 (20260116) - Latest 8.2 Production Release
-- **Website**: https://simion.com/
-- **Download**: May require request/authentication. Check the download page for current requirements.
-- **Publisher**: Adaptas Solutions, LLC (IMI Adaptas)
-- **Documentation**: Available at https://simion.com/info/
-- **System Requirements**: Windows 10/7, Linux (via Wine/CrossOver)
-
-## Recent Improvements
-
-### Version 1.0 (2026-01-23)
-- ✅ Initial release
-- ✅ Web-based download link discovery
-- ✅ Automatic version extraction from websites
-- ✅ Registry-based detection scripts
-- ✅ Support for multiple installer types (EXE, MSI, MSIX, APPX)
-- ✅ Interactive input dialogs
-- ✅ Comprehensive metadata generation
+---
 
 ## License
 
-This script is provided as-is for creating IntuneWin packages from web-based application downloads.
+Provided as-is for creating Intune Win32 packages from web-based application downloads.
