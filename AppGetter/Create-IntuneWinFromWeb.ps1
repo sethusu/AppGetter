@@ -55,11 +55,29 @@ param(
     [string]$IconPath,
     
     [Parameter(Mandatory=$false)]
-    [string]$InstallCommand
+    [string]$InstallCommand,
+
+    [Parameter(Mandatory=$false)]
+    [string]$SupportUrl
 )
 
 # Error handling
 $ErrorActionPreference = "Stop"
+
+# Load AppGetter modules when available
+$moduleRoot = Join-Path $PSScriptRoot 'Modules'
+if (Test-Path $moduleRoot) {
+    Import-Module (Join-Path $moduleRoot 'AppGetter.Config') -Force -ErrorAction SilentlyContinue
+    Import-Module (Join-Path $moduleRoot 'AppGetter.SilentSwitch') -Force -ErrorAction SilentlyContinue
+    Import-Module (Join-Path $moduleRoot 'AppGetter.Core') -Force -ErrorAction SilentlyContinue
+
+    if (Get-Command Get-AppGetterConfig -ErrorAction SilentlyContinue) {
+        $appGetterConfig = Get-AppGetterConfig
+        if ([string]::IsNullOrWhiteSpace($OutputPath) -or $OutputPath -eq 'D:\Intoon In Progress') {
+            $OutputPath = $appGetterConfig.outputPath
+        }
+    }
+}
 
 # Function to show input dialog
 function Get-InputFromDialog {
@@ -650,6 +668,30 @@ $installerExtension = $installerFile.Extension.ToLower()
 # Step 5: Determine install command
 Write-Step "Step 5: Determining install command"
 if ([string]::IsNullOrWhiteSpace($InstallCommand)) {
+    $switchAnalysis = $null
+    if (Get-Command Find-InstallerSilentSwitches -ErrorAction SilentlyContinue) {
+        try {
+            $switchAnalysis = Find-InstallerSilentSwitches `
+                -InstallerPath $installerPath `
+                -SupportUrl $SupportUrl `
+                -AppName $AppName `
+                -ProbeHelp `
+                -DryRun
+            Write-Host "Silent switch status: $($switchAnalysis.Status)" -ForegroundColor Cyan
+            if ($switchAnalysis.RecommendedSwitch) {
+                Write-Host "Recommended switch: $($switchAnalysis.RecommendedSwitch.Switch) ($($switchAnalysis.RecommendedSwitch.Confidence))" -ForegroundColor Green
+            }
+        }
+        catch {
+            Write-Host "Silent switch analysis unavailable: $_" -ForegroundColor Yellow
+        }
+    }
+
+    if ($switchAnalysis -and -not [string]::IsNullOrWhiteSpace($switchAnalysis.InstallCommand)) {
+        $installCommand = $switchAnalysis.InstallCommand
+        Write-Success "Detected install command from switch analysis: $installCommand"
+    }
+    else {
     # Check if we found install switches from documentation
     $detectedSwitch = $null
     if ($installSwitchesInfo -and $installSwitchesInfo.InstallSwitches.Count -gt 0) {
@@ -680,6 +722,7 @@ if ([string]::IsNullOrWhiteSpace($InstallCommand)) {
         $installCommand = "`"$installerFileName`" $switchToUse"
     }
     Write-Success "Detected install command: $installCommand"
+    }
 } else {
     Write-Success "Using provided install command: $InstallCommand"
     $installCommand = $InstallCommand

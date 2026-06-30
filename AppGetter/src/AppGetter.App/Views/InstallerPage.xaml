@@ -1,0 +1,81 @@
+<Page
+    x:Class="AppGetter.App.Views.InstallerPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Padding="{StaticResource PagePadding}" RowDefinitions="Auto,*,Auto">
+        <StackPanel Grid.Row="0" Spacing="8" Margin="0,0,0,16">
+            <TextBlock Text="Installer Analysis" Style="{StaticResource PageTitleStyle}" />
+            <TextBlock
+                Text="Download or upload an installer, then analyze or discover silent install switches."
+                Foreground="{StaticResource SubtleTextBrush}"
+                TextWrapping="Wrap" />
+            <InfoBar x:Name="InstallerInfoBar" IsOpen="False" />
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1">
+            <StackPanel Spacing="16" MaxWidth="1100">
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Source" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBox x:Name="DownloadUrlBox" Header="Download URL" PlaceholderText="https://example.com/setup.exe" />
+                        <TextBox x:Name="SupportUrlBox" Header="Support / documentation URL (optional)" PlaceholderText="https://vendor.com/docs/silent-install" />
+                        <TextBox x:Name="AppNameBox" Header="Application name (optional)" PlaceholderText="My Application" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Download installer" Click="Download_Click" />
+                            <Button Content="Upload installer" Click="Upload_Click" />
+                        </StackPanel>
+                        <TextBlock x:Name="InstallerPathText" Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Analysis options" Style="{StaticResource SectionTitleStyle}" />
+                        <ToggleSwitch x:Name="ProbeHelpSwitch" Header="Probe installer help output" IsOn="True" />
+                        <ToggleSwitch x:Name="DryRunSwitch" Header="Dry-run switch tests (recommended)" IsOn="True" />
+                        <ToggleSwitch x:Name="LiveTestSwitch" Header="Run live switch tests (use VM only)" IsOn="False" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Analyze switches" Style="{StaticResource PrimaryActionButtonStyle}" Click="Analyze_Click" />
+                            <Button Content="Discover switches" Click="Discover_Click" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Results" Style="{StaticResource SectionTitleStyle}" />
+                        <ProgressRing x:Name="BusyRing" Width="32" Height="32" Visibility="Collapsed" />
+                        <TextBlock x:Name="FrameworkText" TextWrapping="Wrap" />
+                        <TextBlock x:Name="StatusText" FontWeight="SemiBold" />
+                        <TextBox
+                            x:Name="InstallCommandBox"
+                            Header="Recommended install command"
+                            IsReadOnly="True"
+                            TextWrapping="Wrap"
+                            AcceptsReturn="True"
+                            MinHeight="72" />
+                        <ListView x:Name="CandidatesList" MinHeight="180" SelectionMode="Single">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Padding="4">
+                                        <TextBlock Text="{Binding Switch}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Source}" Foreground="{StaticResource SubtleTextBrush}" />
+                                        <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Foreground="{StaticResource SubtleTextBrush}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <TextBlock
+            Grid.Row="2"
+            Margin="0,12,0,0"
+            Foreground="{StaticResource SubtleTextBrush}"
+            Text="Live installer testing can modify the system. Use a VM or snapshot before disabling dry-run."
+            TextWrapping="Wrap" />
+    </Grid>
+</Page>

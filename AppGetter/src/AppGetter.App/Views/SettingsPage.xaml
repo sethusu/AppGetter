@@ -1,0 +1,65 @@
+<Page
+    x:Class="AppGetter.App.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Padding="{StaticResource PagePadding}">
+        <StackPanel Spacing="16" MaxWidth="960">
+            <TextBlock Text="Settings" Style="{StaticResource PageTitleStyle}" />
+            <TextBlock
+                Text="Configure where installers are downloaded and where Intune packages are written."
+                Foreground="{StaticResource SubtleTextBrush}"
+                TextWrapping="Wrap" />
+
+            <InfoBar x:Name="SettingsInfoBar" IsOpen="False" Margin="0,0,0,8" />
+
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="16">
+                    <TextBlock Text="Download location" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBox
+                        x:Name="DownloadPathBox"
+                        Header="Download folder"
+                        PlaceholderText="C:\Users\you\Downloads\AppGetter" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Browse" Click="BrowseDownload_Click" />
+                        <Button Content="Validate" Click="ValidateDownload_Click" />
+                    </StackPanel>
+                    <TextBlock x:Name="DownloadValidationText" Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="16">
+                    <TextBlock Text="Output location" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBox
+                        x:Name="OutputPathBox"
+                        Header="Intune package output folder"
+                        PlaceholderText="D:\Intoon In Progress" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Browse" Click="BrowseOutput_Click" />
+                        <Button Content="Validate" Click="ValidateOutput_Click" />
+                    </StackPanel>
+                    <TextBlock x:Name="OutputValidationText" Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="16">
+                    <TextBlock Text="Backend API" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBox
+                        x:Name="ApiUrlBox"
+                        Header="API base URL"
+                        PlaceholderText="http://localhost:5050" />
+                </StackPanel>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <Button
+                    Content="Save settings"
+                    Style="{StaticResource PrimaryActionButtonStyle}"
+                    Click="Save_Click" />
+                <Button Content="Reset defaults" Click="Reset_Click" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>
