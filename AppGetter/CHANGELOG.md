@@ -1,5 +1,17 @@
 # AppGetter Changelog
 
+## Version 2.0 - 2026-06-30
+
+### Added
+- Modern Windows 11 Fluent Design web UI
+- REST API backend with HttpListener
+- Modular PowerShell architecture (Config, Core, SwitchDiscovery modules)
+- Persistent configuration (`%APPDATA%\AppGetter\config.json`)
+- Configurable download location with path validation
+- Silent install switch discovery pipeline (known database, binary analysis, web research, help probing, switch testing)
+- Local installer upload/import support
+- `Start-AppGetter.ps1` launcher script
+
 ## Version 1.0 - 2026-01-23
 
 ### Initial Release

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AppGetter</title>
+  <link rel="stylesheet" href="css/fluent.css">
+</head>
+<body>
+  <div class="app-shell">
+  <nav class="nav-rail">
+    <div class="nav-brand">
+      <div class="app-icon">AG</div>
+      <span>AppGetter</span>
+    </div>
+    <ul class="nav-items">
+      <li><button class="nav-btn active" data-page="home"><span class="nav-icon">&#8962;</span> Home</button></li>
+      <li><button class="nav-btn" data-page="download"><span class="nav-icon">&#8681;</span> Download</button></li>
+      <li><button class="nav-btn" data-page="switches"><span class="nav-icon">&#9881;</span> Silent Switches</button></li>
+      <li><button class="nav-btn" data-page="package"><span class="nav-icon">&#128230;</span> Package</button></li>
+      <li><button class="nav-btn" data-page="settings"><span class="nav-icon">&#9881;</span> Settings</button></li>
+    </ul>
+    <div class="nav-status" id="apiStatus">
+      <span class="status-dot offline"></span>
+      <span>Connecting...</span>
+    </div>
+  </nav>
+
+  <main class="content-area">
+    <!-- Home -->
+    <section class="page active" id="page-home">
+      <header class="page-header">
+        <h1>Welcome to AppGetter</h1>
+        <p class="subtitle">Create IntuneWin packages from web downloads with automatic silent install switch discovery</p>
+      </header>
+      <div class="card-grid">
+        <div class="card accent" onclick="navigateTo('download')">
+          <div class="card-icon">&#8681;</div>
+          <h3>Download Installer</h3>
+          <p>Point to a website or direct download URL and save to your configured location</p>
+        </div>
+        <div class="card" onclick="navigateTo('switches')">
+          <div class="card-icon">&#128269;</div>
+          <h3>Analyze Silent Switches</h3>
+          <p>Test uploaded or downloaded installers to find known or missing silent install flags</p>
+        </div>
+        <div class="card" onclick="navigateTo('package')">
+          <div class="card-icon">&#128230;</div>
+          <h3>Build Package</h3>
+          <p>Generate detection scripts, metadata, and IntuneWin package</p>
+        </div>
+        <div class="card" onclick="navigateTo('settings')">
+          <div class="card-icon">&#9881;</div>
+          <h3>Settings</h3>
+          <p>Configure download location, output path, and test mode</p>
+        </div>
+      </div>
+      <div class="info-banner" id="configSummary"></div>
+    </section>
+
+    <!-- Download -->
+    <section class="page" id="page-download">
+      <header class="page-header">
+        <h1>Download Installer</h1>
+        <p class="subtitle">Download from a URL or use a local file path</p>
+      </header>
+      <div class="form-card">
+        <div class="form-row">
+          <label for="dlAppName">Application Name</label>
+          <input type="text" id="dlAppName" placeholder="e.g. SIMION">
+        </div>
+        <div class="form-row">
+          <label for="dlVersion">Version</label>
+          <input type="text" id="dlVersion" placeholder="latest">
+        </div>
+        <div class="form-row">
+          <label>Source Type</label>
+          <div class="segmented-control">
+            <button class="seg-btn active" data-source="direct">Direct URL</button>
+            <button class="seg-btn" data-source="website">Website Scan</button>
+            <button class="seg-btn" data-source="local">Local File</button>
+          </div>
+        </div>
+        <div class="form-row" id="directUrlRow">
+          <label for="dlUrl">Download URL</label>
+          <input type="url" id="dlUrl" placeholder="https://example.com/installer.exe">
+        </div>
+        <div class="form-row hidden" id="websiteUrlRow">
+          <label for="dlWebsite">Website URL</label>
+          <input type="url" id="dlWebsite" placeholder="https://example.com/">
+          <button class="btn secondary" id="btnScanLinks">Scan for Links</button>
+        </div>
+        <div class="form-row hidden" id="linkSelectRow">
+          <label for="dlLinkSelect">Found Links</label>
+          <select id="dlLinkSelect"></select>
+        </div>
+        <div class="form-row hidden" id="localPathRow">
+          <label for="dlLocalPath">Local File Path</label>
+          <input type="text" id="dlLocalPath" placeholder="C:\Downloads\setup.exe">
+        </div>
+        <div class="form-actions">
+          <button class="btn primary" id="btnDownload">Download / Import</button>
+        </div>
+        <div class="result-panel hidden" id="downloadResult"></div>
+      </div>
+    </section>
+
+    <!-- Silent Switches -->
+    <section class="page" id="page-switches">
+      <header class="page-header">
+        <h1>Silent Install Switch Discovery</h1>
+        <p class="subtitle">Analyze installers to find or discover silent deployment switches</p>
+      </header>
+      <div class="form-card">
+        <div class="form-row">
+          <label for="swInstallerPath">Installer Path</label>
+          <input type="text" id="swInstallerPath" placeholder="Path to downloaded or uploaded installer">
+        </div>
+        <div class="form-row">
+          <label for="swAppName">Application Name</label>
+          <input type="text" id="swAppName" placeholder="Optional">
+        </div>
+        <div class="form-row">
+          <label for="swSupportUrl">Support / Documentation URL</label>
+          <input type="url" id="swSupportUrl" placeholder="Optional - for web research">
+        </div>
+        <div class="form-row">
+          <label for="swTestMode">Test Mode</label>
+          <select id="swTestMode">
+            <option value="dry-run">Dry Run (safe - no install execution)</option>
+            <option value="execute">Execute (actually run installer - use with caution)</option>
+          </select>
+        </div>
+        <div class="form-actions">
+          <button class="btn secondary" id="btnQuickAnalyze">Quick Analyze</button>
+          <button class="btn primary" id="btnDiscoverSwitches">Discover Switches</button>
+        </div>
+      </div>
+
+      <div class="results-section hidden" id="switchResults">
+        <div class="status-badge" id="switchStatus"></div>
+        <div class="card" id="installerTypeCard"></div>
+        <h3>Discovered Switches</h3>
+        <div class="table-wrap">
+          <table class="data-table" id="switchesTable">
+            <thead>
+              <tr><th>Switch</th><th>Confidence</th><th>Source</th><th>Description</th><th>Action</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="recommended-command" id="recommendedCommand"></div>
+        <h3>Test Results</h3>
+        <div id="testResults"></div>
+      </div>
+    </section>
+
+    <!-- Package -->
+    <section class="page" id="page-package">
+      <header class="page-header">
+        <h1>Build Intune Package</h1>
+        <p class="subtitle">Generate detection scripts, metadata, and IntuneWin file</p>
+      </header>
+      <div class="form-card">
+        <div class="form-row">
+          <label for="pkgAppName">Application Name</label>
+          <input type="text" id="pkgAppName" required>
+        </div>
+        <div class="form-row">
+          <label for="pkgVersion">Version</label>
+          <input type="text" id="pkgVersion" value="latest">
+        </div>
+        <div class="form-row">
+          <label for="pkgPublisher">Publisher</label>
+          <input type="text" id="pkgPublisher" placeholder="Optional">
+        </div>
+        <div class="form-row">
+          <label for="pkgInstallerPath">Installer Path</label>
+          <input type="text" id="pkgInstallerPath" required>
+        </div>
+        <div class="form-row">
+          <label for="pkgInstallCommand">Install Command</label>
+          <input type="text" id="pkgInstallCommand" placeholder='Auto-detected or e.g. "setup.exe" /VERYSILENT'>
+          <button class="btn secondary btn-sm" id="btnAutoDetectCommand">Auto-Detect</button>
+        </div>
+        <div class="form-row checkbox-row">
+          <input type="checkbox" id="pkgSkipIntuneWin">
+          <label for="pkgSkipIntuneWin">Skip IntuneWin packaging (metadata only)</label>
+        </div>
+        <div class="form-actions">
+          <button class="btn primary" id="btnBuildPackage">Build Package</button>
+        </div>
+        <div class="result-panel hidden" id="packageResult"></div>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section class="page" id="page-settings">
+      <header class="page-header">
+        <h1>Settings</h1>
+        <p class="subtitle">Configure download location and application preferences</p>
+      </header>
+      <div class="form-card">
+        <div class="form-row">
+          <label for="cfgDownloadLocation">Download Location</label>
+          <div class="input-group">
+            <input type="text" id="cfgDownloadLocation">
+            <button class="btn secondary" id="btnValidateDownload">Validate</button>
+          </div>
+          <span class="field-hint">Where downloaded and uploaded installer files are stored</span>
+        </div>
+        <div class="form-row">
+          <label for="cfgOutputPath">Package Output Path</label>
+          <input type="text" id="cfgOutputPath">
+          <span class="field-hint">Where Intune packages are created</span>
+        </div>
+        <div class="form-row">
+          <label for="cfgApiPort">API Port</label>
+          <input type="number" id="cfgApiPort" min="1024" max="65535">
+        </div>
+        <div class="form-row">
+          <label for="cfgSwitchTestMode">Default Switch Test Mode</label>
+          <select id="cfgSwitchTestMode">
+            <option value="dry-run">Dry Run</option>
+            <option value="execute">Execute</option>
+          </select>
+        </div>
+        <div class="form-row checkbox-row">
+          <input type="checkbox" id="cfgAutoOpenBrowser">
+          <label for="cfgAutoOpenBrowser">Open browser on launch</label>
+        </div>
+        <div class="validation-result hidden" id="validationResult"></div>
+        <div class="form-actions">
+          <button class="btn primary" id="btnSaveSettings">Save Settings</button>
+        </div>
+      </div>
+    </section>
+  </main>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
