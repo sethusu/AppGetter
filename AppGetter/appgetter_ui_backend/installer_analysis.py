@@ -237,7 +237,7 @@ class InstallerInspector:
             raise FileNotFoundError(f"Installer not found: {path}")
 
         installer_type = detect_installer_type(path)
-        engine = detect_installer_engine(path)
+        engine = detect_installer_engine(path) if installer_type == "exe" else None
         analysis = InstallerAnalysis(
             installer_path=str(path),
             file_name=path.name,

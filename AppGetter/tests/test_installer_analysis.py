@@ -27,3 +27,14 @@ def test_detects_nsis_engine_signature(tmp_path: Path) -> None:
     assert "/S" in result["discovery"]["switches"]
     assert result["discovery"]["source"] == "research-db"
 
+
+def test_non_exe_does_not_report_installer_engine(tmp_path: Path) -> None:
+    installer = tmp_path / "notes.txt"
+    installer.write_text("This text mentions NSIS but is not an installer.")
+
+    inspector = InstallerInspector()
+    result = inspector.discover_silent_switches(str(installer))
+
+    assert result["analysis"]["installer_type"] == "unknown"
+    assert result["analysis"]["installer_engine"] is None
+
