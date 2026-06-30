@@ -107,8 +107,8 @@ function Get-DownloadLinksFromWeb {
 
     $results = New-Object System.Collections.Generic.List[string]
     foreach ($pattern in $patterns) {
-        $matches = [regex]::Matches($html, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-        foreach ($match in $matches) {
+        $regexMatches = [regex]::Matches($html, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        foreach ($match in $regexMatches) {
             $link = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Value }
             if ($link -notmatch '^https?://') {
                 $link = [System.Uri]::new([System.Uri]$Url, $link).AbsoluteUri
@@ -516,6 +516,7 @@ $uninstallScript | Set-Content -Path $uninstallScriptPath -Encoding UTF8
 $intuneInstallCommand = '%windir%\sysnative\windowspowershell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File install.ps1'
 $intuneUninstallCommand = '%windir%\sysnative\windowspowershell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1'
 $intuneWinFileName = "$($installerFile.BaseName).intunewin"
+$hasIcon = ($iconFilePath -and (Test-Path $iconFilePath))
 
 $readmeMarkdown = Get-ReadmeMarkdown `
     -AppName $AppName `
@@ -528,7 +529,7 @@ $readmeMarkdown = Get-ReadmeMarkdown `
     -IntuneWinFileName $intuneWinFileName `
     -InstallerHash $installerHash `
     -RawInstallCommand $rawInstallCommand `
-    -HasIcon ([bool](Test-Path $iconFilePath))
+    -HasIcon $hasIcon
 $readmeMarkdown | Set-Content -Path $readmePath -Encoding UTF8
 
 @"
