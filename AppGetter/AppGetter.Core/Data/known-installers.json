@@ -1,0 +1,82 @@
+{
+  "signatures": [
+    {
+      "name": "NSIS (Nullsoft)",
+      "patterns": ["Nullsoft Install System", "NSIS Error"],
+      "silentSwitches": ["/S"],
+      "confidence": "high",
+      "notes": "Standard Nullsoft silent switch is /S (case-sensitive)"
+    },
+    {
+      "name": "Inno Setup",
+      "patterns": ["Inno Setup", "SetupLdr"],
+      "silentSwitches": ["/VERYSILENT", "/SILENT", "/SP-", "/SUPPRESSMSGBOXES", "/NORESTART"],
+      "confidence": "high",
+      "notes": "Use /VERYSILENT /SUPPRESSMSGBOXES /NORESTART for fully silent"
+    },
+    {
+      "name": "InstallShield",
+      "patterns": ["InstallShield", "setup.exe"],
+      "silentSwitches": ["/s", "/v/qn", "/s /v\"/qn\""],
+      "confidence": "medium",
+      "notes": "MSI wrapped InstallShield often uses /s /v\"/qn\""
+    },
+    {
+      "name": "WiX Burn",
+      "patterns": ["WixBundle", "burn.exe"],
+      "silentSwitches": ["/quiet", "/passive", "/norestart"],
+      "confidence": "high",
+      "notes": "WiX bootstrapper bundles"
+    },
+    {
+      "name": "Squirrel",
+      "patterns": ["Squirrel", "Update.exe"],
+      "silentSwitches": ["--silent"],
+      "confidence": "high",
+      "notes": "Electron/Squirrel apps"
+    },
+    {
+      "name": "Advanced Installer",
+      "patterns": ["Advanced Installer"],
+      "silentSwitches": ["/exenoui", "/qn", "/quiet"],
+      "confidence": "medium",
+      "notes": "Check vendor documentation for MSI transforms"
+    },
+    {
+      "name": "Wise Installer",
+      "patterns": ["Wise Installation Wizard"],
+      "silentSwitches": ["/s"],
+      "confidence": "medium",
+      "notes": "Legacy Wise installers"
+    },
+    {
+      "name": "Install4j",
+      "patterns": ["install4j"],
+      "silentSwitches": ["-q", "-console"],
+      "confidence": "medium",
+      "notes": "Java-based installers"
+    },
+    {
+      "name": "MSI Package",
+      "patterns": [],
+      "extensions": [".msi"],
+      "silentSwitches": ["/quiet", "/qn", "/qb!"],
+      "confidence": "high",
+      "notes": "msiexec /i installer.msi /quiet /norestart"
+    },
+    {
+      "name": "MSIX/APPX",
+      "patterns": [],
+      "extensions": [".msix", ".appx", ".msixbundle", ".appxbundle"],
+      "silentSwitches": [],
+      "confidence": "high",
+      "notes": "Use Add-AppxPackage -Path installer.msix"
+    }
+  ],
+  "probeSwitches": ["/?", "/h", "/help", "--help", "-h", "-?"],
+  "commonSilentSwitches": [
+    "/S", "/s", "/SILENT", "/VERYSILENT", "/quiet", "/qn", "/qb", "/qb!",
+    "/passive", "/norestart", "/SUPPRESSMSGBOXES", "/SP-", "--silent",
+    "-s", "-silent", "-q", "/exenoui", "/s /v\"/qn\""
+  ]
+}

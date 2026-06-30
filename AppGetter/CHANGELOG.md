@@ -1,5 +1,18 @@
 # AppGetter Changelog
 
+## Version 2.0 - 2026-06-30
+
+### Web UI and Backend
+
+- Added AppGetter.Core PowerShell module with installer analysis and silent switch discovery
+- Added local REST API server (AppGetter.Server) on port 8765
+- Added Windows 11 Fluent Design web UI (AppGetter.UI)
+- Configurable download location with persistent settings at `%APPDATA%\AppGetter\config.json`
+- Installer signature database for NSIS, Inno Setup, InstallShield, WiX, Squirrel, and more
+- Multi-method silent switch discovery: signature DB, web research, installer help probe
+- Upload support for local installer files via drag-and-drop
+- Dashboard with installer overview and status
+
 ## Version 1.0 - 2026-01-23
 
 ### Initial Release
