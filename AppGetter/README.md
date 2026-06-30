@@ -37,6 +37,20 @@ python -m pip install -r requirements.txt
 python backend/app.py
 ```
 
+### One-command PowerShell launcher
+
+From the `AppGetter` folder:
+
+```powershell
+pwsh -NoProfile -File .\Start-AppGetter.ps1
+```
+
+Optional flags:
+
+- `-Port 8770` to run on a custom port
+- `-SkipDependencyInstall` to skip `pip install`
+- `-NoBrowser` to prevent opening a browser window
+
 Then open:
 
 ```text
