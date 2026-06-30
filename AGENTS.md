@@ -2,17 +2,17 @@
 
 ## Project overview
 
-`AppGetter/` contains a single standalone PowerShell tool, `Create-IntuneWinFromWeb.ps1`,
-that downloads a Windows application installer from the web and generates a Microsoft
-Intune Win32 LOB (`.intunewin`) package plus its metadata (`detection.ps1`,
-`uninstall.ps1`, `app.json`, `win32LobApp.json`, `readme.txt`). See `AppGetter/README.md`
-for full usage and parameters.
+`AppGetter/` is a standalone PowerShell tool that mirrors the [WinGetter](https://github.com/sethusu/WinGetter)
+(Wingetter) architecture. It downloads a Windows application installer from the web and generates a Microsoft
+Intune Win32 LOB (`.intunewin`) package plus its metadata (`install.ps1`, `detection.ps1`, `uninstall.ps1`,
+`README.md`, `app.json`, `win32LobApp.json`, `readme.txt`). See `AppGetter/README.md` for full usage.
 
-There is no build system, package manager, lockfile, or service — it is a one-shot CLI script.
+There is no build system, package manager, lockfile, or service — it is a PowerShell module + CLI/GUI tool.
+The end user is expected to have the Microsoft Win32 Content Prep Tool (`intunewinapputil`) installed.
 
 ## Cursor Cloud specific instructions
 
-This repo is a PowerShell CLI tool; the Cursor Cloud VM is Linux. PowerShell Core
+This repo is a PowerShell CLI/GUI tool; the Cursor Cloud VM is Linux. PowerShell Core
 (`pwsh`) and the `PSScriptAnalyzer` linter module are provisioned by the update script.
 
 - Run the tool: `pwsh -NoProfile -File AppGetter/Create-IntuneWinFromWeb.ps1 ...`
@@ -22,10 +22,10 @@ This repo is a PowerShell CLI tool; the Cursor Cloud VM is Linux. PowerShell Cor
 
 Non-obvious caveats when running on Linux:
 - Always pass `-OutputPath` to a Linux path (e.g. `/tmp/intune-out`). The default is the
-  Windows path `D:\Intoon In Progress`, which fails on Linux.
+  Windows path under `Documents\AppGetter Output`, which fails on Linux.
 - Run non-interactively by always passing `-DownloadUrl` (or `-WebsiteUrl`) **and** `-AppName`.
-  With no args the script opens Windows Forms / `Microsoft.VisualBasic` input dialogs, which
-  do not exist on Linux.
+  With no args the script launches the WPF GUI (Windows only) or opens Windows Forms input dialogs in CLI mode,
+  which do not exist on Linux.
 - The final packaging step (`intunewinapputil`, the Microsoft Win32 Content Prep Tool) is
   closed-source and **Windows-only** (.NET Framework 4.7.2; Linux only via Wine). It is an
   external prerequisite, not part of this repo. On Linux this step fails gracefully — the
