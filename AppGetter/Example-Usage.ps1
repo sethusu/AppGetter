@@ -33,14 +33,20 @@ Write-Host "`nExample 5: Custom output path" -ForegroundColor Cyan
 # .\Create-IntuneWinFromWeb.ps1 `
 #     -WebsiteUrl "https://simion.com/" `
 #     -AppName "SIMION" `
-#     -OutputPath "C:\IntunePackages"
+#     -OutputPath "$env:USERPROFILE\Documents\AppGetter Output"
 
-# Example 6: With custom icon
-Write-Host "`nExample 6: Custom icon" -ForegroundColor Cyan
+# Example 6: PowerShell module
+Write-Host "`nExample 6: PowerShell module" -ForegroundColor Cyan
+# Import-Module .\AppGetter.psd1 -Force
+# Test-AppGetterPrerequisites
+# Invoke-AppGetterPackaging -AppName "MyApp" -DownloadUrl "https://example.com/setup.exe"
+
+# Example 7: With custom icon
+Write-Host "`nExample 7: Custom icon" -ForegroundColor Cyan
 # .\Create-IntuneWinFromWeb.ps1 `
 #     -WebsiteUrl "https://simion.com/" `
 #     -AppName "SIMION" `
-#     -IconPath "D:\Intoon In Progress\AppGetter\logo.png"
+#     -IconPath "C:\Icons\simion.png"
 
 # Example 7: With custom install command
 Write-Host "`nExample 7: Custom install command" -ForegroundColor Cyan
