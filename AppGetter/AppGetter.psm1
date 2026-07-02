@@ -3,6 +3,7 @@ $privateScripts = @(
     'Settings.ps1'
     'Assets.ps1'
     'Web.ps1'
+    'SwitchDiscovery.ps1'
     'IconResolution.ps1'
     'Scripts.ps1'
     'Packaging.ps1'
