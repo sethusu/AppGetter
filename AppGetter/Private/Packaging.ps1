@@ -15,7 +15,7 @@ function Invoke-AppGetterPackaging {
         [scriptblock]$OnProgress
     )
 
-    $totalSteps = 12
+    $totalSteps = 13
     $versionDirectory = $null
     $failureLogPath = $null
     $intunewinFile = $null
@@ -72,47 +72,66 @@ function Invoke-AppGetterPackaging {
 
         $installerHash = (Get-FileHash -Path $installerFile.FullName -Algorithm SHA256).Hash
 
-        $detectedSwitch = Get-DetectedSilentSwitch -InstallSwitchesInfo $details.InstallSwitchesInfo
+        Write-AppGetterProgress -Step 6 -TotalSteps $totalSteps -StepName 'Discovering silent install switches' -Percent 40 `
+            -Message $installerFile.Name -OnProgress $OnProgress
+
+        $switchDiscovery = $null
         if ([string]::IsNullOrWhiteSpace($InstallCommand)) {
-            $installerInstallCommand = Get-InstallerInstallCommand -InstallerFileName $installerFileName `
-                -InstallerExtension $installerExtension -DetectedSwitch $detectedSwitch
-        } else {
+            $switchDiscovery = Resolve-InstallerInstallCommand -InstallerPath $installerFile.FullName `
+                -InstallerFileName $installerFileName -AppName $AppName -SupportUrl $SupportUrl `
+                -WebsiteUrl $WebsiteUrl -DeveloperUrl $DeveloperUrl `
+                -InstallSwitchesInfo $details.InstallSwitchesInfo -SkipVerification -OnProgress $OnProgress
+            $installerInstallCommand = $switchDiscovery.InstallCommand
+        }
+        else {
             $installerInstallCommand = $InstallCommand
+            $switchDiscovery = [PSCustomObject]@{
+                InstallCommand      = $InstallCommand
+                ConfidenceScore     = 100
+                NeedsManualReview   = $false
+                Verified            = $false
+                InstallerFamily     = 'manual'
+                Source              = 'User-provided InstallCommand'
+                DetectedSwitches    = @()
+                AlternativeCommands = @()
+                EvidenceSummary     = @('Install command supplied by user')
+                VerificationReason  = 'Manual override'
+            }
         }
 
-        Write-AppGetterProgress -Step 6 -TotalSteps $totalSteps -StepName 'Generating install.ps1' -Percent 45 -OnProgress $OnProgress
+        Write-AppGetterProgress -Step 7 -TotalSteps $totalSteps -StepName 'Generating install.ps1' -Percent 48 -OnProgress $OnProgress
         $installScript = New-AppGetterInstallScript -PackageId $details.PackageId -DisplayName $details.DisplayName `
             -Version $details.Version -InstallCommand $installerInstallCommand
 
-        Write-AppGetterProgress -Step 7 -TotalSteps $totalSteps -StepName 'Generating detection.ps1' -Percent 55 -OnProgress $OnProgress
+        Write-AppGetterProgress -Step 8 -TotalSteps $totalSteps -StepName 'Generating detection.ps1' -Percent 55 -OnProgress $OnProgress
         $detectionScript = New-AppGetterDetectionScript -PackageId $details.PackageId -DisplayName $details.DisplayName `
             -Version $details.Version
 
-        Write-AppGetterProgress -Step 8 -TotalSteps $totalSteps -StepName 'Generating uninstall.ps1' -Percent 65 -OnProgress $OnProgress
+        Write-AppGetterProgress -Step 9 -TotalSteps $totalSteps -StepName 'Generating uninstall.ps1' -Percent 65 -OnProgress $OnProgress
         $uninstallScript = New-AppGetterUninstallScript -PackageId $details.PackageId -DisplayName $details.DisplayName
 
-        Write-AppGetterProgress -Step 9 -TotalSteps $totalSteps -StepName 'Resolving icon' -Percent 72 -OnProgress $OnProgress
+        Write-AppGetterProgress -Step 10 -TotalSteps $totalSteps -StepName 'Resolving icon' -Percent 72 -OnProgress $OnProgress
         $iconFilePath = Join-Path $versionDirectory 'icon.png'
         $logoFilePath = Join-Path $appDirectory 'logo.png'
         $hasIcon = Resolve-PackageIcon -WebsiteUrl $WebsiteUrl -DeveloperUrl $DeveloperUrl -AppName $AppName `
             -LogoFilePath $logoFilePath -IconFilePath $iconFilePath -IconPath $IconPath `
             -InstallerPath $installerFile.FullName -OnProgress $OnProgress
 
-        Write-AppGetterProgress -Step 10 -TotalSteps $totalSteps -StepName 'Writing metadata' -Percent 80 -OnProgress $OnProgress
+        Write-AppGetterProgress -Step 11 -TotalSteps $totalSteps -StepName 'Writing metadata' -Percent 80 -OnProgress $OnProgress
         $metadata = New-AppGetterMetadataFiles -PackageDetails $details -VersionDirectory $versionDirectory `
             -InstallerFileName $installerFile.Name -InstallerHash $installerHash `
             -InstallerInstallCommand $installerInstallCommand -DetectionScript $detectionScript `
             -InstallScript $installScript -UninstallScript $uninstallScript -IconFilePath $iconFilePath `
-            -FinalDownloadUrl $finalDownloadUrl
+            -FinalDownloadUrl $finalDownloadUrl -SwitchDiscovery $switchDiscovery
 
-        Write-AppGetterProgress -Step 11 -TotalSteps $totalSteps -StepName 'Packaging .intunewin' -Percent 88 -OnProgress $OnProgress
+        Write-AppGetterProgress -Step 12 -TotalSteps $totalSteps -StepName 'Packaging .intunewin' -Percent 88 -OnProgress $OnProgress
         $intunewinCmd = Get-Command intunewinapputil -ErrorAction SilentlyContinue
         $packagingSucceeded = $false
 
         if (-not $intunewinCmd) {
             Write-AppGetterLog -Message 'intunewinapputil not found. Install Microsoft Win32 Content Prep Tool and ensure it is on PATH.' `
                 -Level Warning -OnProgress $OnProgress
-            Write-AppGetterProgress -Step 12 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
+            Write-AppGetterProgress -Step 13 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
                 -Message 'Metadata created, but Content Prep Tool is unavailable.' -Status Completed -OnProgress $OnProgress
         } else {
             $outputDirectory = Split-Path $versionDirectory -Parent
@@ -126,7 +145,7 @@ function Invoke-AppGetterPackaging {
                 if ($LASTEXITCODE -eq 0 -and (Test-Path $intunewinFile)) {
                     $packagingSucceeded = $true
                     $intunewinSize = [math]::Round((Get-Item $intunewinFile).Length / 1MB, 2)
-                    Write-AppGetterProgress -Step 12 -TotalSteps $totalSteps -StepName 'Complete' -Percent 100 `
+                    Write-AppGetterProgress -Step 13 -TotalSteps $totalSteps -StepName 'Complete' -Percent 100 `
                         -Message "Created $intunewinFile ($intunewinSize MB)" -Status Completed -OnProgress $OnProgress
                 } else {
                     throw 'Content Prep Tool failed or output file was not created.'
@@ -134,7 +153,7 @@ function Invoke-AppGetterPackaging {
             } catch {
                 Write-AppGetterLog -Message "Failed to create IntuneWin package: $_" -Level Warning -OnProgress $OnProgress
                 Write-AppGetterFailureLog -LogPath $failureLogPath -Step 'Packaging .intunewin' -ErrorRecord $_
-                Write-AppGetterProgress -Step 12 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
+                Write-AppGetterProgress -Step 13 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
                     -Message 'Metadata created, but .intunewin packaging failed.' -Status Completed -OnProgress $OnProgress
             }
         }
@@ -157,6 +176,7 @@ function Invoke-AppGetterPackaging {
             FinalDownloadUrl     = $finalDownloadUrl
             Metadata             = $metadata
             Details              = $details
+            SwitchDiscovery      = $switchDiscovery
         }
     }
     catch {
