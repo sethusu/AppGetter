@@ -234,6 +234,56 @@ catch {
 "@
 }
 
+function Format-AppGetterSwitchDiscoveryMarkdown {
+    param([pscustomobject]$SwitchDiscoveryResult)
+
+    if (-not $SwitchDiscoveryResult) {
+        return ''
+    }
+
+    $verifiedText = if ($SwitchDiscoveryResult.Verified) {
+        'Yes (runtime verification succeeded on this host)'
+    } elseif ($SwitchDiscoveryResult.Verification -and $SwitchDiscoveryResult.Verification.Status -eq 'Skipped') {
+        'No (runtime verification unavailable on this host)'
+    } else {
+        'No (command was not verified at packaging time)'
+    }
+
+    $reviewText = if ($SwitchDiscoveryResult.NeedsManualReview) { 'Yes — review before deployment' } else { 'No' }
+
+    $evidenceLines = @($SwitchDiscoveryResult.EvidenceSummary | ForEach-Object { "- $_" })
+    $alternativeLines = @($SwitchDiscoveryResult.AlternativeCommands | ForEach-Object { "- ``$_``" })
+
+    $section = @"
+
+## Silent Install Switch Discovery
+
+| Field | Value |
+|---|---|
+| **Detected installer family** | $($SwitchDiscoveryResult.InstallerFamily) |
+| **Confidence score** | $($SwitchDiscoveryResult.ConfidenceScore) / 100 |
+| **Runtime verified** | $verifiedText |
+| **Needs manual review** | $reviewText |
+
+### Evidence
+
+$($evidenceLines -join "`n")
+
+"@
+
+    if ($alternativeLines.Count -gt 0) {
+        $section += @"
+
+### Alternative commands
+
+$($alternativeLines -join "`n")
+
+"@
+    }
+
+    return $section
+}
+
 function New-AppGetterReadmeMarkdown {
     param(
         [pscustomobject]$PackageDetails,
@@ -244,11 +294,13 @@ function New-AppGetterReadmeMarkdown {
         [string]$UninstallCommandLine,
         [string]$FinalDownloadUrl,
         [string]$DetectionType,
-        [bool]$HasIcon
+        [bool]$HasIcon,
+        [pscustomobject]$SwitchDiscoveryResult
     )
 
     $generatedAt = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $installCommandLine = Get-IntuneInstallCommandLine
+    $switchDiscoverySection = Format-AppGetterSwitchDiscoveryMarkdown -SwitchDiscoveryResult $SwitchDiscoveryResult
 
     return @"
 # $($PackageDetails.DisplayName) — Intune Win32 Package
@@ -306,7 +358,7 @@ Use this section when creating or reviewing the Win32 app in the Microsoft Intun
 ``````powershell
 $InstallerInstallCommand
 ``````
-
+$switchDiscoverySection
 ## Intune Command Lines
 
 **Install (recommended for Intune):**
@@ -349,7 +401,8 @@ function New-AppGetterMetadataFiles {
         [string]$InstallScript,
         [string]$UninstallScript,
         [string]$IconFilePath,
-        [string]$FinalDownloadUrl
+        [string]$FinalDownloadUrl,
+        [pscustomobject]$SwitchDiscoveryResult
     )
 
     $uninstallCommandLine = Get-IntuneUninstallCommandLine
@@ -371,7 +424,8 @@ function New-AppGetterMetadataFiles {
     $readme = New-AppGetterReadmeMarkdown -PackageDetails $PackageDetails -InstallerFileName $InstallerFileName `
         -InstallerHash $InstallerHash -IntuneWinFileName $intuneWinFileName `
         -InstallerInstallCommand $InstallerInstallCommand -UninstallCommandLine $uninstallCommandLine `
-        -FinalDownloadUrl $FinalDownloadUrl -DetectionType 'PowerShell script (registry-based version check)' -HasIcon $hasIcon
+        -FinalDownloadUrl $FinalDownloadUrl -DetectionType 'PowerShell script (registry-based version check)' -HasIcon $hasIcon `
+        -SwitchDiscoveryResult $SwitchDiscoveryResult
     $readme | Set-Content -Path $readmePath -Encoding UTF8
 
     $legacyReadme = @"
@@ -412,6 +466,19 @@ See README.md for full Intune upload reference.
         installerContext     = 2
         architecture         = 2
     }
+
+    if ($SwitchDiscoveryResult) {
+        $appJson['silentSwitchDiscovery'] = @{
+            installerFamily     = $SwitchDiscoveryResult.InstallerFamily
+            installCommand      = $SwitchDiscoveryResult.InstallCommand
+            confidenceScore     = $SwitchDiscoveryResult.ConfidenceScore
+            verified            = $SwitchDiscoveryResult.Verified
+            needsManualReview   = $SwitchDiscoveryResult.NeedsManualReview
+            evidenceSummary     = @($SwitchDiscoveryResult.EvidenceSummary)
+            alternativeCommands = @($SwitchDiscoveryResult.AlternativeCommands)
+        }
+    }
+
     $appJson | ConvertTo-Json -Depth 10 | Set-Content -Path $appJsonPath -Encoding UTF8
 
     $detectionScriptBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($DetectionScript))
