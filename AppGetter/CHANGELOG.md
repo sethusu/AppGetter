@@ -1,5 +1,13 @@
 # AppGetter Changelog
 
+## Version 2.1 - 2026-07-02
+
+### Silent install switch discovery
+
+- **`Private/SwitchDiscovery.ps1`** — layered installer fingerprinting, family-based command templates, support-page evidence, and confidence scoring
+- **Packaging flow** — runs discovery after installer download and before `install.ps1` generation
+- **README / `app.json`** — records discovery confidence, evidence, and alternative commands for manual review
+
 ## Version 2.0 - 2026-06-30
 
 ### WinGetter-style rewrite (PowerShell-only)
