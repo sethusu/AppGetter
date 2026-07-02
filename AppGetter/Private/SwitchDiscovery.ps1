@@ -120,15 +120,33 @@ function Get-InstallerFingerprint {
 
     if ($asciiText -match 'MsiInstallProduct|msi\.dll|msiexec') {
         $evidence.Add('Found MSI bridge markers (MsiInstallProduct/msi.dll/msiexec).')
-        if ($matchedFamilies -notcontains 'InstallShield') {
+        if ($matchedFamilies -notcontains 'InstallShield' -and $matchedFamilies -notcontains 'WiXBurn') {
             $matchedFamilies.Add('InstallShield')
         }
     }
 
+    $familyPriority = @{
+        WiXBurn       = 1
+        InnoSetup     = 2
+        NSIS          = 3
+        InstallShield = 4
+        Squirrel      = 5
+        EXE_Generic   = 99
+    }
+
+    if ($matchedFamilies.Count -gt 1) {
+        $evidence.Add("Multiple installer families detected: $($matchedFamilies -join ', ').")
+        $sortedFamilies = $matchedFamilies | Sort-Object { if ($familyPriority.ContainsKey($_)) { $familyPriority[$_] } else { 50 } }
+        $matchedFamilies = [System.Collections.Generic.List[string]]::new()
+        foreach ($family in $sortedFamilies) {
+            if ($matchedFamilies -notcontains $family) {
+                $matchedFamilies.Add($family)
+            }
+        }
+    }
+
     $primaryType = 'exe'
-    $installerFamily = if ($matchedFamilies.Count -eq 1) {
-        $matchedFamilies[0]
-    } elseif ($matchedFamilies.Count -gt 1) {
+    $installerFamily = if ($matchedFamilies.Count -ge 1) {
         $matchedFamilies[0]
     } else {
         'EXE_Generic'
@@ -137,11 +155,7 @@ function Get-InstallerFingerprint {
     $confidence = switch ($matchedFamilies.Count) {
         0 { 35 }
         1 { 75 }
-        default { 55 }
-    }
-
-    if ($matchedFamilies.Count -gt 1) {
-        $evidence.Add("Multiple installer families detected: $($matchedFamilies -join ', ').")
+        default { 60 }
     }
 
     return [PSCustomObject]@{
@@ -244,12 +258,26 @@ function Find-InstallerSwitchCandidates {
     }
 
     foreach ($family in ($familiesToEvaluate | Select-Object -Unique)) {
-        $score = 10
+        $score = switch ($Fingerprint.PrimaryType) {
+            'msi' { 70 }
+            'msix' { 70 }
+            'appx' { 70 }
+            default {
+                if ($Fingerprint.MatchedFamilies.Count -eq 1 -and $Fingerprint.MatchedFamilies[0] -eq $family) {
+                    50
+                } else {
+                    20
+                }
+            }
+        }
         $evidence = @("Known family default for $family.")
 
-        if ($family -eq $Fingerprint.InstallerFamily -and $Fingerprint.Confidence -ge 70) {
+        if ($family -eq $Fingerprint.InstallerFamily) {
             $score += 30
             $evidence += 'Strong binary fingerprint match.'
+        } elseif ($Fingerprint.MatchedFamilies -contains $family) {
+            $score += 20
+            $evidence += 'Binary marker matched for this family.'
         }
 
         if ($NestedCandidates | Where-Object { $_.PreferMsi -and $family -eq 'InstallShield' }) {
@@ -406,14 +434,14 @@ function Resolve-InstallerInstallCommand {
     $alternatives = @($candidates | Sort-Object Score -Descending | Select-Object -Skip 1)
 
     $confidenceScore = [math]::Min(100, [int]$topCandidate.Score)
-    if ($fingerprint.Confidence -ge 75 -and $topCandidate.Source -eq 'FamilyDefault') {
-        $confidenceScore = [math]::Min(100, $confidenceScore + 15)
+    if ($fingerprint.Confidence -ge 60 -and $topCandidate.Source -eq 'FamilyDefault') {
+        $confidenceScore = [math]::Min(100, $confidenceScore + 10)
     }
     if ($topCandidate.Source -eq 'VendorDocumentation') {
         $confidenceScore = [math]::Min(100, $confidenceScore + 10)
     }
-    if ($fingerprint.MatchedFamilies.Count -gt 1) {
-        $confidenceScore = [math]::Max(0, $confidenceScore - 20)
+    if ($fingerprint.MatchedFamilies.Count -gt 1 -and $topCandidate.InstallerFamily -ne $fingerprint.InstallerFamily) {
+        $confidenceScore = [math]::Max(40, $confidenceScore - 10)
     }
 
     $verification = $null
@@ -431,7 +459,9 @@ function Resolve-InstallerInstallCommand {
         }
     }
 
-    $needsManualReview = ($confidenceScore -lt 70) -or (-not $verified -and $verification -and $verification.Status -ne 'Skipped')
+    $needsManualReview = ($confidenceScore -lt 70) -or (
+        -not $verified -and $verification -and $verification.Status -ne 'Skipped' -and $verification.Status -ne 'Success'
+    )
     if ($needsManualReview) {
         Write-AppGetterLog -Message "Silent install command needs manual review (confidence $confidenceScore)." -Level Warning -OnProgress $OnProgress
     } else {
