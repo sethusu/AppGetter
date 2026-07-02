@@ -192,3 +192,16 @@ If AppGetter is running in Linux or no Windows verification host is configured:
 - It combines deterministic signals (file signatures, installer-family markers, direct MSI detection) with authoritative documentation and real execution validation.
 - It handles wrapper scenarios (MSI-in-EXE) that simple switch guessing misses.
 - It treats verification as mandatory for "trusted" automation and gracefully degrades when verification is unavailable.
+
+## Research evidence snapshot used for this proposal
+
+- AppGetter currently defaults to `/S` for unknown EXEs and basic MSI quiet install behavior, which confirms why mixed installer detection is needed.
+- In quick sample analysis:
+  - `7z2409-x64.msi` was detected as a true MSI container (Composite Document MSI).
+  - `vc_redist.x64.exe` exposed WiX Burn markers (`.wixburn`, `BootstrapperApplication`, Burn engine paths), indicating wrapper bootstrapper behavior.
+- Official vendor documentation confirms core silent modes by family:
+  - MSI (`msiexec /quiet` / `/qn`)
+  - Inno (`/VERYSILENT /SUPPRESSMSGBOXES`)
+  - NSIS (`/S`, case-sensitive)
+  - InstallShield (`/s` + optional MSI passthrough via `/v`)
+  - WiX Burn (`/quiet`, `/passive`, `/norestart`, `/layout` depending on bootstrapper)
