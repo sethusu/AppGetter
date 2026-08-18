@@ -225,7 +225,7 @@ try {
     }
 
     $intuneWinLine = if ($result.IntuneWinFile) { $result.IntuneWinFile } else { '(not created)' }
-    $sourceLine = if ($result.UsedLocalInstaller) { $result.InstallerFile } else { $result.FinalDownloadUrl }
+    $sourceLine = if ($result.FinalDownloadUrl) { $result.FinalDownloadUrl } else { $result.InstallerFile }
     Write-Host @"
 
 Package Details:

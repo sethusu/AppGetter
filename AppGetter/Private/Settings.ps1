@@ -68,10 +68,11 @@ function Get-AppGetterSettings {
 
     if (Test-Path $settingsPath) {
         try {
-            $saved = Get-Content -Path $settingsPath -Raw | ConvertFrom-Json
-            foreach ($key in $defaults.Keys) {
-                if ($saved.PSObject.Properties.Name -contains $key -and $saved.$key) {
-                    $defaults[$key] = $saved.$key
+            $saved = Get-Content -Path $settingsPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            foreach ($key in @($defaults.Keys)) {
+                $property = $saved.PSObject.Properties[$key]
+                if ($property -and $null -ne $property.Value -and "$($property.Value)" -ne '') {
+                    $defaults[$key] = $property.Value
                 }
             }
         } catch {
