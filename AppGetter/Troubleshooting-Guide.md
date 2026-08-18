@@ -235,8 +235,15 @@ This guide helps troubleshoot common issues when creating IntuneWin packages fro
 
 **Solutions:**
 
-1. **Manual Download** (Recommended)
+1. **Use a local installer** (Recommended)
    - Download the installer manually after logging in
+   - Point AppGetter at the file on this computer:
+     ```powershell
+     .\Create-IntuneWinFromWeb.ps1 -InstallerPath "C:\Downloads\setup.exe" -AppName "MyApp"
+     ```
+   - In the GUI, choose **Local installer** and **Browse...**
+
+2. **Use a direct download URL**
    - Use the direct download URL (may be temporary)
    - Provide `-DownloadUrl` with the direct link
 
@@ -305,6 +312,30 @@ Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" |
 2. Re-run `intunewinapputil` to regenerate `.intunewin` package
 3. Upload new package to Intune
 4. Verify detection works on next sync cycle
+
+### Issue: Content Prep Tool not found
+
+**Symptoms:**
+- GUI header shows a red prerequisite warning
+- Metadata is created but `.intunewin` is missing
+
+**Solutions:**
+
+1. Click **Install Content Prep** in the GUI header (uses winget)
+2. From PowerShell: `Install-AppGetterContentPrepTool`
+3. Or install manually: `winget install --exact --id Microsoft.Win32ContentPrepTool`
+4. Confirm `intunewinapputil` is on PATH, then restart AppGetter
+
+### Issue: GUI Browse... crashes or does nothing
+
+AppGetter uses the same output-folder dialog as WinGetter: rooted at **My Computer**, parented to the main window, with **Make New Folder** enabled. If a saved path is on another drive, the dialog still opens. Failures show an error message instead of closing the GUI.
+
+### Issue: AppGetter.exe flashes and exits
+
+- Keep `AppGetter.exe` next to `Gui\`, `Private\`, and `AppGetter.psd1`
+- Check `%TEMP%\AppGetter-launch.log`
+- On Windows, run `.\Build\Diagnose-AppGetterLaunch.ps1`
+- If antivirus blocks the exe, use `Start-AppGetter.cmd` or `Launch-AppGetter.ps1`
 
 ## Additional Resources
 

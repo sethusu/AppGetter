@@ -258,12 +258,64 @@ function Resolve-WebDownloadUrl {
     return $selectedUrl
 }
 
+function Get-LocalInstallerVersion {
+    param([string]$InstallerPath)
+
+    if (-not $InstallerPath -or -not (Test-Path -LiteralPath $InstallerPath)) {
+        return $null
+    }
+
+    try {
+        $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path -LiteralPath $InstallerPath).Path)
+        foreach ($candidate in @($info.ProductVersion, $info.FileVersion)) {
+            if ($candidate -and $candidate -notmatch '^\s*$' -and $candidate -ne '0.0.0.0') {
+                return ($candidate -replace '\s+', '').Trim()
+            }
+        }
+    } catch {
+        Write-Verbose "Could not read file version from $InstallerPath : $_"
+    }
+
+    return $null
+}
+
+function Copy-LocalInstallerToPackage {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerPath,
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationDirectory,
+        [scriptblock]$OnProgress
+    )
+
+    if (-not (Test-Path -LiteralPath $InstallerPath)) {
+        throw "Local installer not found: $InstallerPath"
+    }
+
+    $sourceFile = Get-Item -LiteralPath $InstallerPath
+    if ($sourceFile.PSIsContainer) {
+        throw "InstallerPath must be a file, not a directory: $InstallerPath"
+    }
+
+    $destination = Join-Path $DestinationDirectory $sourceFile.Name
+    Write-AppGetterLog -Message "Copying local installer: $($sourceFile.FullName)" -OnProgress $OnProgress
+    Copy-Item -LiteralPath $sourceFile.FullName -Destination $destination -Force
+    if (-not (Test-Path -LiteralPath $destination)) {
+        throw "Failed to copy local installer to $destination"
+    }
+
+    $sizeMB = [math]::Round((Get-Item -LiteralPath $destination).Length / 1MB, 2)
+    Write-AppGetterLog -Message "Copied: $($sourceFile.Name) ($sizeMB MB)" -Level Success -OnProgress $OnProgress
+    return (Get-Item -LiteralPath $destination)
+}
+
 function Get-WebPackageDetails {
     param(
         [Parameter(Mandatory = $true)]
         [string]$AppName,
         [string]$WebsiteUrl,
         [string]$DownloadUrl,
+        [string]$InstallerPath,
         [string]$DeveloperUrl,
         [string]$SupportUrl,
         [string]$Version,
@@ -292,6 +344,13 @@ function Get-WebPackageDetails {
         }
     }
 
+    if ([string]::IsNullOrWhiteSpace($foundVersion) -and $InstallerPath) {
+        $fileVersion = Get-LocalInstallerVersion -InstallerPath $InstallerPath
+        if ($fileVersion) {
+            $foundVersion = $fileVersion
+        }
+    }
+
     if ([string]::IsNullOrWhiteSpace($foundVersion)) {
         $foundVersion = 'latest'
     }
@@ -301,10 +360,11 @@ function Get-WebPackageDetails {
     }
 
     if ([string]::IsNullOrWhiteSpace($foundDescription)) {
+        $sourceNote = if ($InstallerPath) { 'Packaged from a local installer' } else { 'Downloaded from web' }
         $foundDescription = if ($Publisher) {
-            "$AppName by $Publisher - Downloaded from web"
+            "$AppName by $Publisher - $sourceNote"
         } else {
-            "$AppName - Downloaded from web"
+            "$AppName - $sourceNote"
         }
     }
 
@@ -317,6 +377,7 @@ function Get-WebPackageDetails {
         Description          = $foundDescription
         WebsiteUrl           = $WebsiteUrl
         DownloadUrl          = $DownloadUrl
+        InstallerPath        = $InstallerPath
         DeveloperUrl         = $DeveloperUrl
         SupportUrl           = $SupportUrl
         Homepage             = if ($WebsiteUrl) { $WebsiteUrl } elseif ($DeveloperUrl) { $DeveloperUrl } else { '' }

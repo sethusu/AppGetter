@@ -1,1 +1,6 @@
 app_data/
+
+# Local ps2exe experiments
+AppGetter.exe
+Launch-AppGetter.exe
+

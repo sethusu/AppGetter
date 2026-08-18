@@ -1,0 +1,7 @@
+# Build / packaging outputs
+/dist/
+*.zip
+
+# Local ps2exe experiments (built artifacts belong under dist/)
+/AppGetter/AppGetter.exe
+/AppGetter/Launch-AppGetter.exe

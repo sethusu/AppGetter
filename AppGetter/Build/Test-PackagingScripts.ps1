@@ -1,0 +1,149 @@
+<#
+.SYNOPSIS
+    Lightweight checks for the ps2exe launcher and build script (safe on non-Windows).
+#>
+
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Stop'
+$root = Split-Path -Parent $PSScriptRoot
+$failures = @()
+
+function Test-ScriptParses {
+    param([string]$Path)
+    $errors = $null
+    $tokens = $null
+    $null = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$errors)
+    if ($errors -and $errors.Count -gt 0) {
+        return ($errors | ForEach-Object { $_.ToString() }) -join '; '
+    }
+    return $null
+}
+
+$required = @(
+    (Join-Path $root 'Launch-AppGetter.ps1')
+    (Join-Path $root 'Start-AppGetter.cmd')
+    (Join-Path $PSScriptRoot 'Build-AppGetterExe.ps1')
+    (Join-Path $root 'Gui\Start-AppGetterGui.ps1')
+    (Join-Path $root 'AppGetter.psd1')
+)
+
+foreach ($path in $required) {
+    if (-not (Test-Path -LiteralPath $path)) {
+        $failures += "Missing required file: $path"
+    }
+}
+
+foreach ($script in @(
+        (Join-Path $root 'Launch-AppGetter.ps1')
+        (Join-Path $PSScriptRoot 'Build-AppGetterExe.ps1')
+        (Join-Path $root 'Gui\Start-AppGetterGui.ps1')
+        (Join-Path $root 'Create-IntuneWinFromWeb.ps1')
+    )) {
+    if (Test-Path -LiteralPath $script) {
+        $parseError = Test-ScriptParses -Path $script
+        if ($parseError) {
+            $failures += "Parse error in ${script}: $parseError"
+        }
+    }
+}
+
+$launcher = Get-Content -LiteralPath (Join-Path $root 'Launch-AppGetter.ps1') -Raw
+foreach ($needle in @(
+        'Get-AppGetterAppRoot'
+        'Start-AppGetterGui.ps1'
+        'Show-AppGetterStartupError'
+        'Start-AppGetterGuiProcess'
+        'WindowsPowerShell\v1.0\powershell.exe'
+        'isCompiled'
+        'EncodedCommand'
+        'AppGetter-launch.log'
+        'CreateNoWindow'
+    )) {
+    if ($launcher -notmatch [regex]::Escape($needle)) {
+        $failures += "Launch-AppGetter.ps1 missing expected content: $needle"
+    }
+}
+
+$build = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Build-AppGetterExe.ps1') -Raw
+foreach ($needle in @('Invoke-ps2exe', '-noConsole', 'AppGetter.exe', 'Launch-AppGetter.ps1')) {
+    if ($build -notmatch [regex]::Escape($needle)) {
+        $failures += "Build-AppGetterExe.ps1 missing expected content: $needle"
+    }
+}
+
+$cmd = Get-Content -LiteralPath (Join-Path $root 'Start-AppGetter.cmd') -Raw
+if ($cmd -notmatch 'Launch-AppGetter\.ps1') {
+    $failures += 'Start-AppGetter.cmd does not reference Launch-AppGetter.ps1'
+}
+if ($cmd -notmatch 'ExecutionPolicy Bypass') {
+    $failures += 'Start-AppGetter.cmd should use ExecutionPolicy Bypass'
+}
+
+# PowerShell 5.1 reads BOM-less scripts using the ANSI code page. UTF-8 bytes such as
+# 0x92/0x94 then become curly quotes and terminate strings early.
+$utf8Bom = [byte[]](0xEF, 0xBB, 0xBF)
+$privateDir = Join-Path $root 'Private'
+foreach ($scriptPath in Get-ChildItem -LiteralPath $privateDir -Filter '*.ps1' -File) {
+    $bytes = [System.IO.File]::ReadAllBytes($scriptPath.FullName)
+    $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq $utf8Bom[0] -and $bytes[1] -eq $utf8Bom[1] -and $bytes[2] -eq $utf8Bom[2])
+    if ($hasBom) {
+        continue
+    }
+
+    $offset = 0
+    while ($offset -lt $bytes.Length) {
+        $b = $bytes[$offset]
+        if ($b -lt 0x80) {
+            $offset++
+            continue
+        }
+
+        if ($b -ge 0xF0) { $seqLen = 4 }
+        elseif ($b -ge 0xE0) { $seqLen = 3 }
+        elseif ($b -ge 0xC0) { $seqLen = 2 }
+        else {
+            $failures += "$($scriptPath.Name) contains invalid UTF-8 continuation at offset $offset"
+            break
+        }
+
+        if (($offset + $seqLen) -gt $bytes.Length) {
+            $failures += "$($scriptPath.Name) contains truncated UTF-8 sequence at offset $offset"
+            break
+        }
+
+        $sequence = $bytes[$offset..($offset + $seqLen - 1)]
+        foreach ($quoteRisk in 0x91, 0x92, 0x93, 0x94) {
+            if ($sequence -contains [byte]$quoteRisk) {
+                $failures += "$($scriptPath.Name) is UTF-8 without BOM and contains byte 0x$([Convert]::ToString($quoteRisk, 16)) inside a multi-byte character. Windows PowerShell 5.1 may misread that as a curly quote and break parsing. Use ASCII or save with a UTF-8 BOM."
+                break
+            }
+        }
+
+        $failures += "$($scriptPath.Name) contains non-ASCII bytes without a UTF-8 BOM (offset $offset). Windows PowerShell 5.1 may mis-parse the file; use ASCII or add a UTF-8 BOM."
+        break
+    }
+}
+
+$gui = Get-Content -LiteralPath (Join-Path $root 'Gui\Start-AppGetterGui.ps1') -Raw
+foreach ($needle in @(
+        'Show-FolderBrowser'
+        'Install-AppGetterContentPrepTool'
+        'Get-AppGetterAppOutputPath'
+        'InstallerPath'
+        'RootFolder'
+        'MyComputer'
+    )) {
+    if ($gui -notmatch [regex]::Escape($needle)) {
+        $failures += "Gui\Start-AppGetterGui.ps1 missing expected content: $needle"
+    }
+}
+
+if ($failures.Count -gt 0) {
+    Write-Host 'Packaging checks FAILED:' -ForegroundColor Red
+    $failures | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+    exit 1
+}
+
+Write-Host 'Packaging checks passed.' -ForegroundColor Green
