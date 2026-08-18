@@ -5,6 +5,7 @@ function Invoke-AppGetterPackaging {
         [string]$AppName,
         [string]$WebsiteUrl,
         [string]$DownloadUrl,
+        [string]$LocalInstallerPath,
         [string]$DeveloperUrl,
         [string]$SupportUrl,
         [string]$Version,
@@ -19,13 +20,27 @@ function Invoke-AppGetterPackaging {
     $versionDirectory = $null
     $failureLogPath = $null
     $intunewinFile = $null
+    $useLocalInstaller = -not [string]::IsNullOrWhiteSpace($LocalInstallerPath)
+
+    if ($useLocalInstaller) {
+        $LocalInstallerPath = [System.IO.Path]::GetFullPath($LocalInstallerPath)
+        if (-not (Test-Path -LiteralPath $LocalInstallerPath)) {
+            throw "Local installer not found: $LocalInstallerPath"
+        }
+        if (-not (Test-AppGetterInstallerExtension -Path $LocalInstallerPath)) {
+            throw "Unsupported installer type. Use .exe, .msi, .msix, or .appx: $LocalInstallerPath"
+        }
+    } elseif ([string]::IsNullOrWhiteSpace($WebsiteUrl) -and [string]::IsNullOrWhiteSpace($DownloadUrl)) {
+        throw 'Provide a Website URL, Direct Download URL, or LocalInstallerPath.'
+    }
 
     try {
         Write-AppGetterProgress -Step 1 -TotalSteps $totalSteps -StepName 'Loading package details' -Percent 5 `
             -Message "Preparing $AppName" -OnProgress $OnProgress
 
         $details = Get-WebPackageDetails -AppName $AppName -WebsiteUrl $WebsiteUrl -DownloadUrl $DownloadUrl `
-            -DeveloperUrl $DeveloperUrl -SupportUrl $SupportUrl -Version $Version -Publisher $Publisher
+            -DeveloperUrl $DeveloperUrl -SupportUrl $SupportUrl -Version $Version -Publisher $Publisher `
+            -LocalInstallerPath $LocalInstallerPath
 
         if (-not (Test-Path $OutputPath)) {
             New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
@@ -34,33 +49,57 @@ function Invoke-AppGetterPackaging {
         Write-AppGetterProgress -Step 2 -TotalSteps $totalSteps -StepName 'Creating directories' -Percent 10 `
             -Message 'Creating output folders' -OnProgress $OnProgress
 
-        $appDirectory = Join-Path $OutputPath $details.PackageId
+        $appDirectory = Get-AppGetterAppOutputPath -BasePath $OutputPath -PackageId $details.PackageId
+        $baseOutputPath = Get-AppGetterBaseOutputPath -Path $appDirectory -PackageId $details.PackageId
+        if (-not (Test-Path $baseOutputPath)) {
+            New-Item -ItemType Directory -Path $baseOutputPath -Force | Out-Null
+        }
         $versionDirectory = Join-Path $appDirectory $details.Version
         $failureLogPath = Join-Path $versionDirectory 'appgetter-packaging.log'
         if (-not (Test-Path $versionDirectory)) {
             New-Item -ItemType Directory -Path $versionDirectory -Force | Out-Null
         }
 
-        Write-AppGetterProgress -Step 3 -TotalSteps $totalSteps -StepName 'Resolving download URL' -Percent 15 `
-            -Message 'Finding installer download link' -OnProgress $OnProgress
+        $finalDownloadUrl = $null
+        $installerFileName = $null
+        $installerPath = $null
 
-        $finalDownloadUrl = Resolve-WebDownloadUrl -WebsiteUrl $WebsiteUrl -DownloadUrl $DownloadUrl `
-            -AppName $AppName -OnProgress $OnProgress
-        $details | Add-Member -NotePropertyName FinalDownloadUrl -NotePropertyValue $finalDownloadUrl -Force
+        if ($useLocalInstaller) {
+            Write-AppGetterProgress -Step 3 -TotalSteps $totalSteps -StepName 'Preparing local installer' -Percent 15 `
+                -Message (Split-Path -Leaf $LocalInstallerPath) -OnProgress $OnProgress
 
-        $installerFileName = Split-Path -Leaf $finalDownloadUrl
-        if ($installerFileName -match '([^?]+)') {
-            $installerFileName = $matches[1]
+            $installerFileName = Split-Path -Leaf $LocalInstallerPath
+            $finalDownloadUrl = "file:///$($LocalInstallerPath -replace '\\', '/')"
+
+            Write-AppGetterProgress -Step 4 -TotalSteps $totalSteps -StepName 'Copying local installer' -Percent 25 `
+                -Message $installerFileName -OnProgress $OnProgress
+
+            $installerPath = Join-Path $versionDirectory $installerFileName
+            Copy-Item -LiteralPath $LocalInstallerPath -Destination $installerPath -Force
+        } else {
+            Write-AppGetterProgress -Step 3 -TotalSteps $totalSteps -StepName 'Resolving download URL' -Percent 15 `
+                -Message 'Finding installer download link' -OnProgress $OnProgress
+
+            $finalDownloadUrl = Resolve-WebDownloadUrl -WebsiteUrl $WebsiteUrl -DownloadUrl $DownloadUrl `
+                -AppName $AppName -OnProgress $OnProgress
+            $details | Add-Member -NotePropertyName FinalDownloadUrl -NotePropertyValue $finalDownloadUrl -Force
+
+            $installerFileName = Split-Path -Leaf $finalDownloadUrl
+            if ($installerFileName -match '([^?]+)') {
+                $installerFileName = $matches[1]
+            }
+
+            Write-AppGetterProgress -Step 4 -TotalSteps $totalSteps -StepName 'Downloading installer' -Percent 25 `
+                -Message $installerFileName -OnProgress $OnProgress
+
+            $installerPath = Join-Path $versionDirectory $installerFileName
+            $null = Start-WebInstallerDownload -Url $finalDownloadUrl -OutputPath $installerPath `
+                -FileName $installerFileName -OnProgress $OnProgress
         }
 
-        Write-AppGetterProgress -Step 4 -TotalSteps $totalSteps -StepName 'Downloading installer' -Percent 25 `
-            -Message $installerFileName -OnProgress $OnProgress
+        $details | Add-Member -NotePropertyName FinalDownloadUrl -NotePropertyValue $finalDownloadUrl -Force
 
-        $installerPath = Join-Path $versionDirectory $installerFileName
-        $null = Start-WebInstallerDownload -Url $finalDownloadUrl -OutputPath $installerPath `
-            -FileName $installerFileName -OnProgress $OnProgress
-
-        $installerFile = Get-Item $installerPath
+        $installerFile = Get-Item -LiteralPath $installerPath
         $installerExtension = $installerFile.Extension.ToLower()
 
         if ($installerExtension -in '.zip', '.7z') {
@@ -119,10 +158,10 @@ function Invoke-AppGetterPackaging {
             -FinalDownloadUrl $finalDownloadUrl -SwitchDiscoveryResult $switchDiscoveryResult
 
         Write-AppGetterProgress -Step 12 -TotalSteps $totalSteps -StepName 'Packaging .intunewin' -Percent 90 -OnProgress $OnProgress
-        $intunewinCmd = Get-Command intunewinapputil -ErrorAction SilentlyContinue
+        $contentPrepPath = Resolve-ContentPrepToolPath
         $packagingSucceeded = $false
 
-        if (-not $intunewinCmd) {
+        if (-not $contentPrepPath) {
             Write-AppGetterLog -Message 'intunewinapputil not found. Install Microsoft Win32 Content Prep Tool and ensure it is on PATH.' `
                 -Level Warning -OnProgress $OnProgress
             Write-AppGetterProgress -Step 13 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
@@ -135,7 +174,7 @@ function Invoke-AppGetterPackaging {
             }
 
             try {
-                & intunewinapputil -c $versionDirectory -s $installerFile.Name -o $outputDirectory -q
+                & $contentPrepPath -c $versionDirectory -s $installerFile.Name -o $outputDirectory -q
                 if ($LASTEXITCODE -eq 0 -and (Test-Path $intunewinFile)) {
                     $packagingSucceeded = $true
                     $intunewinSize = [math]::Round((Get-Item $intunewinFile).Length / 1MB, 2)
@@ -153,7 +192,8 @@ function Invoke-AppGetterPackaging {
         }
 
         Save-AppGetterSettings -OutputPath $OutputPath -LastAppName $AppName `
-            -LastWebsiteUrl $WebsiteUrl -LastDownloadUrl $DownloadUrl
+            -LastWebsiteUrl $WebsiteUrl -LastDownloadUrl $DownloadUrl `
+            -LastLocalInstallerPath $LocalInstallerPath -LastPackageId $details.PackageId
 
         return [PSCustomObject]@{
             Success              = $true
@@ -168,8 +208,10 @@ function Invoke-AppGetterPackaging {
             LogoFile             = if (Test-Path $logoFilePath) { $logoFilePath } else { $null }
             InstallerFile        = $installerFile.FullName
             FinalDownloadUrl     = $finalDownloadUrl
+            LocalInstallerPath   = if ($useLocalInstaller) { $LocalInstallerPath } else { $null }
             Metadata             = $metadata
             Details              = $details
+            UsedCustomIcon       = [bool]$IconPath
         }
     }
     catch {

@@ -264,6 +264,7 @@ function Get-WebPackageDetails {
         [string]$AppName,
         [string]$WebsiteUrl,
         [string]$DownloadUrl,
+        [string]$LocalInstallerPath,
         [string]$DeveloperUrl,
         [string]$SupportUrl,
         [string]$Version,
@@ -292,6 +293,13 @@ function Get-WebPackageDetails {
         }
     }
 
+    if ([string]::IsNullOrWhiteSpace($foundVersion) -and $LocalInstallerPath) {
+        $extractedVersion = Get-VersionFromInstallerPath -Path $LocalInstallerPath
+        if ($extractedVersion) {
+            $foundVersion = $extractedVersion
+        }
+    }
+
     if ([string]::IsNullOrWhiteSpace($foundVersion)) {
         $foundVersion = 'latest'
     }
@@ -302,7 +310,13 @@ function Get-WebPackageDetails {
 
     if ([string]::IsNullOrWhiteSpace($foundDescription)) {
         $foundDescription = if ($Publisher) {
-            "$AppName by $Publisher - Downloaded from web"
+            if ($LocalInstallerPath) {
+                "$AppName by $Publisher - Local installer"
+            } else {
+                "$AppName by $Publisher - Downloaded from web"
+            }
+        } elseif ($LocalInstallerPath) {
+            "$AppName - Local installer"
         } else {
             "$AppName - Downloaded from web"
         }
@@ -317,6 +331,7 @@ function Get-WebPackageDetails {
         Description          = $foundDescription
         WebsiteUrl           = $WebsiteUrl
         DownloadUrl          = $DownloadUrl
+        LocalInstallerPath   = $LocalInstallerPath
         DeveloperUrl         = $DeveloperUrl
         SupportUrl           = $SupportUrl
         Homepage             = if ($WebsiteUrl) { $WebsiteUrl } elseif ($DeveloperUrl) { $DeveloperUrl } else { '' }

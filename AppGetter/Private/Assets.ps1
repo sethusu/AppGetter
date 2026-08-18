@@ -53,3 +53,31 @@ function Get-PackageIdFromAppName {
     param([string]$AppName)
     return ($AppName -replace '[^a-zA-Z0-9]', '')
 }
+
+function Get-VersionFromInstallerPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($Path)
+    if ($name -match '(\d+\.\d+\.\d+\.\d+)') {
+        return $matches[1]
+    }
+    if ($name -match '(\d+\.\d+\.\d+)') {
+        return $matches[1]
+    }
+    if ($name -match '(\d+\.\d+)') {
+        return $matches[1]
+    }
+
+    return $null
+}
+
+function Test-AppGetterInstallerExtension {
+    param([string]$Path)
+
+    $extension = [System.IO.Path]::GetExtension($Path).ToLower()
+    return $extension -in '.exe', '.msi', '.msix', '.appx'
+}
