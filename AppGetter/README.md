@@ -53,16 +53,21 @@ cd AppGetter
 .\Create-IntuneWinFromWeb.ps1
 ```
 
-Or launch the GUI directly:
+Or double-click **`AppGetter.exe`** after building with `.\Build\Build-AppGetterExe.ps1`, or use:
 
 ```powershell
-.\Gui\Start-AppGetterGui.ps1
+.\Launch-AppGetter.ps1
+.\Start-AppGetter.cmd
 ```
 
-4. Enter the **application name** and either a **website URL** (to scan for download links) or a **direct download URL**.
-5. Choose an **output folder** (default: `Documents\AppGetter Output`).
+4. Enter the **application name** and choose an installer source:
+   - **Download URL** — website URL (scans for links) or direct download URL
+   - **Local installer file** — path to an `.exe`, `.msi`, `.msix`, or `.appx` on this computer
+5. Choose an **output folder** (default: `Documents\AppGetter\{AppName}`).
 6. Click **Create Package** and wait for the progress steps to finish.
 7. Open the output folder and upload the `.intunewin` to Intune using the included `README.md` as your field guide.
+
+If the Microsoft Win32 Content Prep Tool is missing, use **Install Content Prep** in the GUI (requires Winget).
 
 ---
 
@@ -78,6 +83,9 @@ cd AppGetter
 
 # Package from a direct download URL
 .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/installer.exe" -AppName "MyApp" -Version "1.0.0"
+
+# Package from a local installer on this computer
+.\Create-IntuneWinFromWeb.ps1 -LocalInstallerPath "C:\Installers\setup.exe" -AppName "MyApp"
 
 # Custom output path and icon
 .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/setup.exe" -AppName "MyApp" `
@@ -101,7 +109,7 @@ cd AppGetter
 ## Output folder layout
 
 ```
-Documents\AppGetter Output\
+Documents\AppGetter\
 └── SIMION\
     ├── logo.png
     └── 8.2.1.3\
@@ -129,6 +137,7 @@ Default output path and last-used settings are saved to:
 |-----------|-------------|
 | **WebsiteUrl** | URL to scan for download links |
 | **DownloadUrl** | Direct download URL (skips website scanning) |
+| **LocalInstallerPath** | Local installer path on this computer |
 | **AppName** | Application display name |
 | **Version** | Optional version (auto-detected from website if omitted) |
 | **Publisher** | Publisher name |
@@ -147,12 +156,17 @@ Default output path and last-used settings are saved to:
 AppGetter/
 ├── README.md                          ← You are here
 ├── Create-IntuneWinFromWeb.ps1         ← CLI entry point (no args = GUI)
+├── Launch-AppGetter.ps1               ← GUI launcher (used by AppGetter.exe)
+├── Start-AppGetter.cmd                ← Double-click helper
 ├── AppGetter.psm1                     ← Core module
 ├── AppGetter.psd1
+├── Build/
+│   └── Build-AppGetterExe.ps1         ← Build portable AppGetter.exe
 ├── Private/                           ← Packaging, web download, icons, scripts
 ├── Gui/
 │   ├── Start-AppGetterGui.ps1
-│   └── AppGetter.MainWindow.xaml      ← WPF UI
+│   ├── AppGetter.MainWindow.xaml      ← WPF UI (Wingetter-style)
+│   └── AppGetter.IconPickerDialog.xaml
 └── Example-Usage.ps1
 ```
 

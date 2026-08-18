@@ -2,9 +2,15 @@
 
 ## Unreleased
 
-### Silent install switch discovery
+### Wingetter-style UI, executable, and local installers
 
-- **`Private/SwitchDiscovery.ps1`** — layered discovery pipeline: binary fingerprinting (MSI, Inno, NSIS, InstallShield, WiX Burn), nested MSI references, support-page switch hints, and confidence-scored candidate ranking
+- **GUI** — layout aligned with Wingetter: installer source (download URL or local file), output destination picker, Content Prep Tool status with **Install Content Prep** button, background packaging progress
+- **Executable** — `Launch-AppGetter.ps1`, `Start-AppGetter.cmd`, and `Build\Build-AppGetterExe.ps1` for portable `AppGetter.exe` distribution (ps2exe)
+- **Local installers** — `-LocalInstallerPath` / GUI local file picker for `.exe`, `.msi`, `.msix`, and `.appx` on the packaging machine
+- **Output paths** — per-app subfolders under `Documents\AppGetter\{AppName}` (Wingetter-style), with settings migration from `AppGetter Output`
+- **Content Prep Tool** — expanded PATH resolution and `Install-AppGetterContentPrepTool` via winget
+
+### Silent install switch discovery — layered discovery pipeline: binary fingerprinting (MSI, Inno, NSIS, InstallShield, WiX Burn), nested MSI references, support-page switch hints, and confidence-scored candidate ranking
 - **Packaging flow** — runs discovery after installer download and before `install.ps1` generation; user-provided `-InstallCommand` bypasses discovery
 - **Metadata** — `README.md` and `app.json` include discovery evidence, confidence score, alternatives, and manual-review flag
 

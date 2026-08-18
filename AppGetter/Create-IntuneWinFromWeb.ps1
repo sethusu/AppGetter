@@ -8,6 +8,8 @@
     The URL of the website containing the download link.
 .PARAMETER DownloadUrl
     Optional. Direct download URL if known.
+.PARAMETER LocalInstallerPath
+    Optional. Path to a local installer (.exe, .msi, .msix, or .appx) on this computer.
 .PARAMETER AppName
     The application name.
 .PARAMETER Version
@@ -33,6 +35,8 @@
 .EXAMPLE
     .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/installer.exe" -AppName "MyApp"
 .EXAMPLE
+    .\Create-IntuneWinFromWeb.ps1 -LocalInstallerPath "C:\Installers\setup.exe" -AppName "MyApp"
+.EXAMPLE
     .\Create-IntuneWinFromWeb.ps1 -UseGui
 #>
 
@@ -43,6 +47,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$DownloadUrl,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LocalInstallerPath,
 
     [Parameter(Mandatory = $false)]
     [string]$AppName,
@@ -79,9 +86,10 @@ if ($UseGui -or (
         -not $PSBoundParameters.ContainsKey('AppName') -and
         -not $AppName -and
         -not $WebsiteUrl -and
-        -not $DownloadUrl
+        -not $DownloadUrl -and
+        -not $LocalInstallerPath
     )) {
-    & (Join-Path $moduleRoot 'Gui\Start-AppGetterGui.ps1')
+    & (Join-Path $moduleRoot 'Launch-AppGetter.ps1')
     return
 }
 
@@ -134,12 +142,18 @@ function Select-DownloadLinkFromCli {
     return $Links[$parsedNumber - 1]
 }
 
-if ([string]::IsNullOrWhiteSpace($WebsiteUrl) -and [string]::IsNullOrWhiteSpace($DownloadUrl)) {
-    Write-Host 'Website URL or Download URL not provided. Opening input dialog...' -ForegroundColor Cyan
-    $hasDirectUrl = Get-InputFromDialog -Title 'AppGetter - Download Source' `
-        -Prompt "Do you have a direct download URL?`n`nEnter 'yes' or 'y' for a direct link, or leave blank to search a website."
+if ([string]::IsNullOrWhiteSpace($WebsiteUrl) -and [string]::IsNullOrWhiteSpace($DownloadUrl) -and [string]::IsNullOrWhiteSpace($LocalInstallerPath)) {
+    Write-Host 'No installer source provided. Opening input dialog...' -ForegroundColor Cyan
+    $sourceChoice = Get-InputFromDialog -Title 'AppGetter - Installer Source' `
+        -Prompt "Enter 'local' for a file on this computer, 'yes' or 'y' for a direct download URL, or leave blank to scan a website."
 
-    if ($hasDirectUrl -and ($hasDirectUrl -match '^(yes|y)$')) {
+    if ($sourceChoice -and ($sourceChoice -match '^(local|l)$')) {
+        $LocalInstallerPath = Get-InputFromDialog -Title 'AppGetter - Local Installer' `
+            -Prompt 'Enter the full path to the installer file:'
+        if ([string]::IsNullOrWhiteSpace($LocalInstallerPath)) {
+            throw 'Local installer path is required.'
+        }
+    } elseif ($sourceChoice -and ($sourceChoice -match '^(yes|y)$')) {
         $DownloadUrl = Get-InputFromDialog -Title 'AppGetter - Enter Download URL' `
             -Prompt 'Enter the direct download URL:'
         if ([string]::IsNullOrWhiteSpace($DownloadUrl)) {
@@ -163,11 +177,25 @@ if ([string]::IsNullOrWhiteSpace($AppName)) {
 }
 
 if (-not $OutputPath) {
-    $OutputPath = (Get-AppGetterSettings).OutputPath
+    $settings = Get-AppGetterSettings
+    $OutputPath = $settings.OutputPath
+}
+
+if ($AppName) {
+    $packageId = Get-PackageIdFromAppName -AppName $AppName
+    $baseOutput = Get-AppGetterBaseOutputPath -Path $OutputPath -PackageId $packageId
+    $OutputPath = Get-AppGetterAppOutputPath -BasePath $baseOutput -PackageId $packageId
 }
 
 try {
-    if (-not [string]::IsNullOrWhiteSpace($WebsiteUrl) -and [string]::IsNullOrWhiteSpace($DownloadUrl)) {
+    if (-not [string]::IsNullOrWhiteSpace($LocalInstallerPath)) {
+        if (-not (Test-Path -LiteralPath $LocalInstallerPath)) {
+            throw "Local installer not found: $LocalInstallerPath"
+        }
+        if (-not (Test-AppGetterInstallerExtension -Path $LocalInstallerPath)) {
+            throw "Unsupported installer type. Use .exe, .msi, .msix, or .appx: $LocalInstallerPath"
+        }
+    } elseif (-not [string]::IsNullOrWhiteSpace($WebsiteUrl) -and [string]::IsNullOrWhiteSpace($DownloadUrl)) {
         Write-Host "`n[Step 1: Finding download links]" -ForegroundColor Cyan
         $downloadLinks = Find-WebDownloadLinks -Url $WebsiteUrl -AppName $AppName
         if ($downloadLinks.Count -eq 0) {
@@ -196,8 +224,9 @@ try {
     }
 
     $result = Invoke-AppGetterPackaging -AppName $AppName -WebsiteUrl $WebsiteUrl -DownloadUrl $DownloadUrl `
-        -DeveloperUrl $DeveloperUrl -SupportUrl $SupportUrl -Version $Version -Publisher $Publisher `
-        -OutputPath $OutputPath -IconPath $IconPath -InstallCommand $InstallCommand -OnProgress $onProgress
+        -LocalInstallerPath $LocalInstallerPath -DeveloperUrl $DeveloperUrl -SupportUrl $SupportUrl `
+        -Version $Version -Publisher $Publisher -OutputPath $OutputPath -IconPath $IconPath `
+        -InstallCommand $InstallCommand -OnProgress $onProgress
 
     if ($result.PackagingSucceeded) {
         Write-Host "`nPackage created successfully!" -ForegroundColor Green
@@ -214,6 +243,7 @@ Package Details:
 - Version: $($result.Version)
 - Publisher: $($result.Publisher)
 - Download URL: $($result.FinalDownloadUrl)
+- Local Installer: $(if ($result.LocalInstallerPath) { $result.LocalInstallerPath } else { '(not used)' })
 - Output Directory: $($result.VersionDirectory)
 - IntuneWin Package: $intuneWinLine
 

@@ -1,5 +1,5 @@
 @{
-    ModuleVersion     = '2.0.0'
+    ModuleVersion     = '2.1.0'
     GUID              = 'b4e9d3f2-0c5e-4a8b-9f7d-2e3c4b5a6d7e'
     Author            = 'AppGetter'
     CompanyName       = 'AppGetter'
@@ -13,9 +13,14 @@
         'Get-WebPackageDetails'
         'Get-AppGetterSettings'
         'Save-AppGetterSettings'
+        'Get-AppGetterBaseOutputPath'
+        'Get-AppGetterAppOutputPath'
         'Test-AppGetterPrerequisites'
+        'Install-AppGetterContentPrepTool'
         'Resolve-PackageIcon'
         'Set-AppGetterPackageIconFiles'
+        'Get-PackageIdFromAppName'
+        'Test-AppGetterInstallerExtension'
     )
     PrivateData       = @{
         PSData = @{

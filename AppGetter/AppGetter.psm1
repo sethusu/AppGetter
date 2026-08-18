@@ -23,7 +23,12 @@ Export-ModuleMember -Function @(
     'Get-WebPackageDetails'
     'Get-AppGetterSettings'
     'Save-AppGetterSettings'
+    'Get-AppGetterBaseOutputPath'
+    'Get-AppGetterAppOutputPath'
     'Test-AppGetterPrerequisites'
+    'Install-AppGetterContentPrepTool'
     'Resolve-PackageIcon'
     'Set-AppGetterPackageIconFiles'
+    'Get-PackageIdFromAppName'
+    'Test-AppGetterInstallerExtension'
 )
