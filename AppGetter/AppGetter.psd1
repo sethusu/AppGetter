@@ -10,6 +10,7 @@
     FunctionsToExport = @(
         'Invoke-AppGetterPackaging'
         'Find-WebDownloadLinks'
+        'Get-AppGetterDownloadLinkList'
         'Get-WebPackageDetails'
         'Resolve-AppGetterInstallerSource'
         'Copy-AppGetterLocalInstaller'

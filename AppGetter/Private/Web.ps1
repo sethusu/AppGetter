@@ -222,6 +222,37 @@ function Start-WebInstallerDownload {
     return $false
 }
 
+function Get-AppGetterDownloadLinkList {
+    <#
+    .SYNOPSIS
+        Returns website download links as a flat list of strings.
+    .DESCRIPTION
+        Find-WebDownloadLinks returns its results wrapped in an outer array so a single
+        link is not unrolled. Background jobs hand that wrapper back as one object, which
+        would collapse every link into a single entry, so callers that cross a job or
+        runspace boundary use this function instead.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Url,
+        [string]$AppName
+    )
+
+    $links = Find-WebDownloadLinks -Url $Url -AppName $AppName
+    $flat = [System.Collections.Generic.List[string]]::new()
+    foreach ($link in $links) {
+        if ($link -is [string]) {
+            $flat.Add($link)
+        } elseif ($link) {
+            foreach ($nested in $link) {
+                if ($nested) { $flat.Add([string]$nested) }
+            }
+        }
+    }
+
+    return $flat.ToArray()
+}
+
 function Get-AppGetterInstallerFileNameFromUrl {
     param(
         [Parameter(Mandatory = $true)]

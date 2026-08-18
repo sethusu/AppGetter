@@ -20,6 +20,7 @@ foreach ($scriptName in $privateScripts) {
 Export-ModuleMember -Function @(
     'Invoke-AppGetterPackaging'
     'Find-WebDownloadLinks'
+    'Get-AppGetterDownloadLinkList'
     'Get-WebPackageDetails'
     'Resolve-AppGetterInstallerSource'
     'Copy-AppGetterLocalInstaller'

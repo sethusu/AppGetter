@@ -593,7 +593,7 @@ function Start-AppGetterBackgroundLinkScan {
     return Start-Job -ArgumentList $modulePath, $WebsiteUrl, $AppName -ScriptBlock {
         param($ModulePath, $Url, $Name)
         Import-Module $ModulePath -Force
-        Find-WebDownloadLinks -Url $Url -AppName $Name
+        Get-AppGetterDownloadLinkList -Url $Url -AppName $Name
     }
 }
 
@@ -914,6 +914,10 @@ function Invoke-AppGetterLinkScan {
                     throw ($err | Out-String)
                 }
                 $links = @(Receive-Job -Job $job)
+                # Guard against a job handing back the whole collection as a single object.
+                if ($links.Count -eq 1 -and $links[0] -isnot [string]) {
+                    $links = @($links[0])
+                }
                 Complete-AppGetterLinkScan -Links $links -WebsiteUrl $websiteUrl
             } catch {
                 Complete-AppGetterLinkScan -Links @() -WebsiteUrl $websiteUrl -ErrorRecord $_
@@ -1031,6 +1035,21 @@ function Start-AppGetterPackagingFromUi {
     # Always pack into a folder named after the app.
     $appOutputPath = Get-AppGetterAppOutputPath -BasePath $script:baseOutputPath -PackageId $packageId
     $outputPathBox.Text = $appOutputPath
+
+    # Persist the choices now so they survive a failed packaging run too.
+    $saveArguments = @{
+        OutputPath     = $script:baseOutputPath
+        LastAppName    = $appName
+        LastPackageId  = $packageId
+        LastPublisher  = $publisherBox.Text.Trim()
+        LastSourceMode = $mode
+    }
+    switch ($mode) {
+        'LocalFile' { $saveArguments.LastInstallerPath = $sourceValue }
+        'Website' { $saveArguments.LastWebsiteUrl = $sourceValue }
+        default { $saveArguments.LastDownloadUrl = $sourceValue }
+    }
+    Save-AppGetterSettings @saveArguments
 
     $packArguments = @{
         AppName               = $appName
