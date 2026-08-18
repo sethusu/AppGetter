@@ -222,6 +222,177 @@ function Start-WebInstallerDownload {
     return $false
 }
 
+function Get-AppGetterDownloadLinkList {
+    <#
+    .SYNOPSIS
+        Returns website download links as a flat list of strings.
+    .DESCRIPTION
+        Find-WebDownloadLinks returns its results wrapped in an outer array so a single
+        link is not unrolled. Background jobs hand that wrapper back as one object, which
+        would collapse every link into a single entry, so callers that cross a job or
+        runspace boundary use this function instead.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Url,
+        [string]$AppName
+    )
+
+    $links = Find-WebDownloadLinks -Url $Url -AppName $AppName
+    $flat = [System.Collections.Generic.List[string]]::new()
+    foreach ($link in $links) {
+        if ($link -is [string]) {
+            $flat.Add($link)
+        } elseif ($link) {
+            foreach ($nested in $link) {
+                if ($nested) { $flat.Add([string]$nested) }
+            }
+        }
+    }
+
+    return $flat.ToArray()
+}
+
+function Get-AppGetterInstallerFileNameFromUrl {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Url
+    )
+
+    $fileName = $null
+    try {
+        $uri = [Uri]$Url
+        $fileName = [System.IO.Path]::GetFileName($uri.LocalPath)
+    } catch {
+        # Not an absolute URI (or an odd scheme) -- fall back to string parsing below.
+        $fileName = ($Url -split '[?#]')[0]
+        $fileName = ($fileName -split '[\\/]')[-1]
+    }
+
+    if ([string]::IsNullOrWhiteSpace($fileName)) {
+        return 'installer.exe'
+    }
+
+    $fileName = [Uri]::UnescapeDataString($fileName)
+    $invalidCharacters = [System.IO.Path]::GetInvalidFileNameChars()
+    $fileName = ($fileName.ToCharArray() | ForEach-Object {
+            if ($invalidCharacters -contains $_) { '_' } else { $_ }
+        }) -join ''
+
+    if ([string]::IsNullOrWhiteSpace([System.IO.Path]::GetExtension($fileName))) {
+        $fileName = "$fileName.exe"
+    }
+
+    return $fileName
+}
+
+function Copy-AppGetterLocalInstaller {
+    <#
+    .SYNOPSIS
+        Stages an installer that already exists on the machine running AppGetter.
+    .DESCRIPTION
+        Copies the selected file into the package version folder so the Content Prep Tool
+        packages a self-contained folder, exactly as it does for downloaded installers.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerPath,
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationDirectory,
+        [scriptblock]$OnProgress
+    )
+
+    if (-not (Test-Path -LiteralPath $InstallerPath)) {
+        throw "Installer file not found: $InstallerPath"
+    }
+
+    $sourceItem = Get-Item -LiteralPath $InstallerPath
+    if ($sourceItem.PSIsContainer) {
+        throw "Installer path must be a file, not a folder: $InstallerPath"
+    }
+
+    if (-not (Test-Path -LiteralPath $DestinationDirectory)) {
+        New-Item -ItemType Directory -Path $DestinationDirectory -Force | Out-Null
+    }
+
+    $destinationPath = Join-Path $DestinationDirectory $sourceItem.Name
+    $sizeMB = [math]::Round($sourceItem.Length / 1MB, 2)
+    Write-AppGetterLog -Message "Copying local installer: $($sourceItem.FullName) ($sizeMB MB)" -OnProgress $OnProgress
+
+    if ((Resolve-Path -LiteralPath $sourceItem.FullName).Path -ne $destinationPath) {
+        Copy-Item -LiteralPath $sourceItem.FullName -Destination $destinationPath -Force
+    }
+
+    Write-AppGetterLog -Message "Staged installer: $($sourceItem.Name) ($sizeMB MB)" -Level Success -OnProgress $OnProgress
+    return $destinationPath
+}
+
+function Resolve-AppGetterInstallerSource {
+    <#
+    .SYNOPSIS
+        Decides where the installer comes from: a local file, a direct URL, or a scanned website.
+    #>
+    param(
+        [string]$DownloadUrl,
+        [string]$WebsiteUrl,
+        [string]$InstallerPath,
+        [string]$AppName,
+        [scriptblock]$OnProgress
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($InstallerPath)) {
+        if (-not (Test-Path -LiteralPath $InstallerPath)) {
+            throw "Installer file not found: $InstallerPath"
+        }
+        $resolved = (Resolve-Path -LiteralPath $InstallerPath).Path
+        Write-AppGetterLog -Message "Using local installer file: $resolved" -Level Success -OnProgress $OnProgress
+        return [PSCustomObject]@{
+            SourceType = 'LocalFile'
+            Location   = $resolved
+            FileName   = [System.IO.Path]::GetFileName($resolved)
+        }
+    }
+
+    $resolvedUrl = Resolve-WebDownloadUrl -WebsiteUrl $WebsiteUrl -DownloadUrl $DownloadUrl -AppName $AppName -OnProgress $OnProgress
+    $sourceType = if (-not [string]::IsNullOrWhiteSpace($DownloadUrl)) { 'DownloadUrl' } else { 'Website' }
+
+    return [PSCustomObject]@{
+        SourceType = $sourceType
+        Location   = $resolvedUrl
+        FileName   = Get-AppGetterInstallerFileNameFromUrl -Url $resolvedUrl
+    }
+}
+
+function Get-AppGetterLocalInstallerVersion {
+    param([string]$InstallerPath)
+
+    if ([string]::IsNullOrWhiteSpace($InstallerPath) -or -not (Test-Path -LiteralPath $InstallerPath)) {
+        return $null
+    }
+
+    try {
+        $versionInfo = (Get-Item -LiteralPath $InstallerPath).VersionInfo
+        foreach ($candidate in @($versionInfo.ProductVersion, $versionInfo.FileVersion)) {
+            if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                $trimmed = $candidate.Trim()
+                if ($trimmed -match '^\d+(\.\d+){1,3}') {
+                    return $matches[0]
+                }
+            }
+        }
+    } catch {
+        Write-AppGetterLog -Message "Could not read version info from installer: $_" -Level Warning
+    }
+
+    # Fall back to a version embedded in the file name (e.g. setup-8.2.1.3.exe).
+    $fileName = [System.IO.Path]::GetFileNameWithoutExtension($InstallerPath)
+    if ($fileName -match '(\d+(\.\d+){1,3})') {
+        return $matches[1]
+    }
+
+    return $null
+}
+
 function Resolve-WebDownloadUrl {
     param(
         [string]$WebsiteUrl,
@@ -264,6 +435,7 @@ function Get-WebPackageDetails {
         [string]$AppName,
         [string]$WebsiteUrl,
         [string]$DownloadUrl,
+        [string]$InstallerPath,
         [string]$DeveloperUrl,
         [string]$SupportUrl,
         [string]$Version,
@@ -274,6 +446,7 @@ function Get-WebPackageDetails {
     $foundVersion = $Version
     $foundDescription = $null
     $installSwitchesInfo = $null
+    $isLocalSource = -not [string]::IsNullOrWhiteSpace($InstallerPath)
 
     $urlsToCheck = @()
     if ($WebsiteUrl) { $urlsToCheck += $WebsiteUrl }
@@ -282,6 +455,13 @@ function Get-WebPackageDetails {
     foreach ($url in $urlsToCheck) {
         if (-not $foundDescription) {
             $foundDescription = Get-WebAppDescription -Url $url -AppName $AppName
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($foundVersion) -and $isLocalSource) {
+        $localVersion = Get-AppGetterLocalInstallerVersion -InstallerPath $InstallerPath
+        if ($localVersion) {
+            $foundVersion = $localVersion
         }
     }
 
@@ -301,10 +481,11 @@ function Get-WebPackageDetails {
     }
 
     if ([string]::IsNullOrWhiteSpace($foundDescription)) {
+        $origin = if ($isLocalSource) { 'Packaged from a local installer file' } else { 'Downloaded from web' }
         $foundDescription = if ($Publisher) {
-            "$AppName by $Publisher - Downloaded from web"
+            "$AppName by $Publisher - $origin"
         } else {
-            "$AppName - Downloaded from web"
+            "$AppName - $origin"
         }
     }
 
@@ -317,6 +498,8 @@ function Get-WebPackageDetails {
         Description          = $foundDescription
         WebsiteUrl           = $WebsiteUrl
         DownloadUrl          = $DownloadUrl
+        InstallerPath        = $InstallerPath
+        SourceType           = if ($isLocalSource) { 'LocalFile' } elseif ($DownloadUrl) { 'DownloadUrl' } else { 'Website' }
         DeveloperUrl         = $DeveloperUrl
         SupportUrl           = $SupportUrl
         Homepage             = if ($WebsiteUrl) { $WebsiteUrl } elseif ($DeveloperUrl) { $DeveloperUrl } else { '' }
