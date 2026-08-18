@@ -1,5 +1,33 @@
 # AppGetter Changelog
 
+## Version 2.1 - Unreleased
+
+### Wingetter UI parity and executable deployment
+
+AppGetter now follows the Wingetter GUI architecture and ships the same executable
+deployment pipeline:
+
+- **`Build/Build-AppGetterExe.ps1`** — compiles `Launch-AppGetter.ps1` into a double-clickable
+  `AppGetter.exe` with ps2exe, stages `dist\AppGetter`, and zips `AppGetter-portable.zip`
+- **`Launch-AppGetter.ps1`** / **`Start-AppGetter.cmd`** — launcher entry points (exe, cmd, or ps1)
+  with startup logging to `%TEMP%\AppGetter-launch.log`
+- **Local installer support** — new `-InstallerPath` parameter (CLI and `Invoke-AppGetterPackaging`)
+  and a "Local Installer File" browse field in the GUI package an installer already on this
+  computer instead of downloading it
+- **Non-blocking GUI packaging** — packaging runs in a background runspace with a progress queue,
+  so the window stays responsive (same pattern as Wingetter)
+- **Install Content Prep from the GUI** — `Install-AppGetterContentPrepTool` installs the Microsoft
+  Win32 Content Prep Tool via winget; the header shows an "Install Content Prep" button when the
+  tool is missing
+- **Stronger Content Prep detection** — `Resolve-ContentPrepToolPath` refreshes the session PATH and
+  checks winget link and Program Files locations (same checks as Wingetter); packaging invokes the
+  resolved executable path
+- **Wingetter output layout** — output destination is a base folder with a per-app subfolder
+  (`Documents\AppGetter\{App}` by default); the browse dialog roots at My Computer and is parented
+  to the main window
+- **Settings** — persists the base output folder and the last installer path; legacy
+  `Documents\AppGetter Output` default migrates automatically
+
 ## Unreleased
 
 ### Silent install switch discovery

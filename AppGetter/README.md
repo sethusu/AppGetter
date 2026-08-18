@@ -1,8 +1,10 @@
 # AppGetter
 
-**Turn web-based application downloads into Intune Win32 packages in minutes.**
+**Turn web downloads or local installer files into Intune Win32 packages in minutes.**
 
-AppGetter automates the tedious parts of packaging desktop software for Microsoft Intune: downloading the installer from the web, generating `install.ps1` / `detection.ps1` / `uninstall.ps1`, resolving an app icon, building the `.intunewin` file with the Microsoft Win32 Content Prep Tool, and writing a field-by-field Intune upload guide.
+AppGetter automates the tedious parts of packaging desktop software for Microsoft Intune: downloading the installer from the web (or copying one already on your computer), generating `install.ps1` / `detection.ps1` / `uninstall.ps1`, resolving an app icon, building the `.intunewin` file with the Microsoft Win32 Content Prep Tool, and writing a field-by-field Intune upload guide.
+
+AppGetter follows the [WinGetter](https://github.com/sethusu/WinGetter) (Wingetter) architecture and UI — the difference is the installer source: Wingetter pulls apps from Winget, AppGetter uses a download URL or a file on the computer running it.
 
 Built for IT admins and packaging teams who need repeatable Win32 app onboarding without hand-writing detection scripts for every app.
 
@@ -29,8 +31,8 @@ For each application, AppGetter produces:
 | Requirement | Notes |
 |-------------|-------|
 | **Windows 10/11** | PowerShell 5.1 or later |
-| **[Win32 Content Prep Tool](https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool)** | `intunewinapputil` must be on your PATH |
-| **Internet Access** | Required to download installers from websites |
+| **[Win32 Content Prep Tool](https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool)** | `intunewinapputil` — install it from the GUI (via winget) if it is missing |
+| **Internet Access** | Required when packaging from a website or direct download URL |
 
 Run the built-in check from PowerShell:
 
@@ -45,8 +47,7 @@ Test-AppGetterPrerequisites
 ## Quick start (GUI — recommended)
 
 1. **Clone or download** this repository.
-2. Open **PowerShell** (not necessarily elevated).
-3. Run:
+2. Double-click **`Start-AppGetter.cmd`** (no elevated PowerShell required), or run from PowerShell:
 
 ```powershell
 cd AppGetter
@@ -59,10 +60,29 @@ Or launch the GUI directly:
 .\Gui\Start-AppGetterGui.ps1
 ```
 
-4. Enter the **application name** and either a **website URL** (to scan for download links) or a **direct download URL**.
-5. Choose an **output folder** (default: `Documents\AppGetter Output`).
-6. Click **Create Package** and wait for the progress steps to finish.
-7. Open the output folder and upload the `.intunewin` to Intune using the included `README.md` as your field guide.
+3. Enter the **application name** and one of: a **website URL** (to scan for download links), a **direct download URL**, or a **local installer file** (Browse...).
+4. Choose an **output folder** — each app gets its own subfolder (default: `Documents\AppGetter\{App}`).
+5. Click **Create Package** and watch the live progress steps (the window stays responsive while packaging runs in the background).
+6. Open the output folder and upload the `.intunewin` to Intune using the included `README.md` as your field guide.
+
+If the Content Prep Tool is missing, the header shows an **Install Content Prep** button that installs `intunewinapputil` via winget.
+
+---
+
+## Deploy as an executable
+
+Build a double-clickable `AppGetter.exe` (same ps2exe pipeline as Wingetter):
+
+```powershell
+cd AppGetter
+.\Build\Build-AppGetterExe.ps1
+```
+
+This stages `dist\AppGetter` with `AppGetter.exe` next to the runtime files and creates
+`dist\AppGetter-portable.zip` for sharing. End users just double-click `AppGetter.exe` —
+no elevated PowerShell session required. If antivirus blocks the exe, `Start-AppGetter.cmd`
+or `Launch-AppGetter.ps1` launch the same GUI. Startup problems are logged to
+`%TEMP%\AppGetter-launch.log`.
 
 ---
 
@@ -78,6 +98,9 @@ cd AppGetter
 
 # Package from a direct download URL
 .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/installer.exe" -AppName "MyApp" -Version "1.0.0"
+
+# Package an installer already on this computer
+.\Create-IntuneWinFromWeb.ps1 -InstallerPath "C:\Installers\setup.exe" -AppName "MyApp" -Version "1.0.0"
 
 # Custom output path and icon
 .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/setup.exe" -AppName "MyApp" `
@@ -101,7 +124,7 @@ cd AppGetter
 ## Output folder layout
 
 ```
-Documents\AppGetter Output\
+Documents\AppGetter\
 └── SIMION\
     ├── logo.png
     └── 8.2.1.3\
@@ -129,6 +152,7 @@ Default output path and last-used settings are saved to:
 |-----------|-------------|
 | **WebsiteUrl** | URL to scan for download links |
 | **DownloadUrl** | Direct download URL (skips website scanning) |
+| **InstallerPath** | Path to an installer file on this computer (skips downloading) |
 | **AppName** | Application display name |
 | **Version** | Optional version (auto-detected from website if omitted) |
 | **Publisher** | Publisher name |
@@ -147,12 +171,16 @@ Default output path and last-used settings are saved to:
 AppGetter/
 ├── README.md                          ← You are here
 ├── Create-IntuneWinFromWeb.ps1         ← CLI entry point (no args = GUI)
+├── Launch-AppGetter.ps1               ← Double-click / ps2exe entry point
+├── Start-AppGetter.cmd                ← Double-click helper (no build required)
 ├── AppGetter.psm1                     ← Core module
 ├── AppGetter.psd1
 ├── Private/                           ← Packaging, web download, icons, scripts
 ├── Gui/
 │   ├── Start-AppGetterGui.ps1
 │   └── AppGetter.MainWindow.xaml      ← WPF UI
+├── Build/
+│   └── Build-AppGetterExe.ps1         ← Builds AppGetter.exe + portable zip
 └── Example-Usage.ps1
 ```
 
@@ -165,6 +193,8 @@ Import-Module .\AppGetter\AppGetter.psd1
 
 Find-WebDownloadLinks -Url 'https://simion.com/' -AppName 'SIMION'
 Invoke-AppGetterPackaging -AppName 'MyApp' -DownloadUrl 'https://example.com/setup.exe' -OutputPath 'C:\Out'
+Invoke-AppGetterPackaging -AppName 'MyApp' -InstallerPath 'C:\Installers\setup.exe' -OutputPath 'C:\Out'
+Install-AppGetterContentPrepTool   # installs intunewinapputil via winget if missing
 ```
 
 ---
@@ -173,8 +203,9 @@ Invoke-AppGetterPackaging -AppName 'MyApp' -DownloadUrl 'https://example.com/set
 
 | Problem | What to try |
 |---------|-------------|
-| `intunewinapputil` not found | Install the [Content Prep Tool](https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool) and add it to PATH |
-| No download links found | Provide a direct `-DownloadUrl` instead of `-WebsiteUrl` |
+| `intunewinapputil` not found | Click **Install Content Prep** in the GUI, run `Install-AppGetterContentPrepTool`, or install the [Content Prep Tool](https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool) manually |
+| No download links found | Provide a direct `-DownloadUrl` or a local `-InstallerPath` instead of `-WebsiteUrl` |
+| `AppGetter.exe` won't start | Check `%TEMP%\AppGetter-launch.log`; use `Start-AppGetter.cmd` or `Launch-AppGetter.ps1` instead |
 | Packaging failed | Check `appgetter-packaging.log` in the version output folder and the GUI log panel |
 | Detection fails on devices | Run `detection.ps1` locally; review logs in `%ProgramData%\Microsoft\IntuneManagementExtension\Logs\` |
 | GUI won't start | Run from PowerShell 5.1+ on Windows; WPF requires a desktop session |
@@ -185,4 +216,4 @@ More detail: [Troubleshooting-Guide.md](Troubleshooting-Guide.md)
 
 ## License
 
-Provided as-is for creating Intune Win32 packages from web-based application downloads.
+Provided as-is for creating Intune Win32 packages from web downloads or local installer files.

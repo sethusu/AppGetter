@@ -21,9 +21,13 @@ Export-ModuleMember -Function @(
     'Invoke-AppGetterPackaging'
     'Find-WebDownloadLinks'
     'Get-WebPackageDetails'
+    'Get-AppGetterDefaultBaseOutputPath'
+    'Get-AppGetterBaseOutputPath'
+    'Get-AppGetterAppOutputPath'
     'Get-AppGetterSettings'
     'Save-AppGetterSettings'
     'Test-AppGetterPrerequisites'
+    'Install-AppGetterContentPrepTool'
     'Resolve-PackageIcon'
     'Set-AppGetterPackageIconFiles'
 )
