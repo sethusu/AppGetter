@@ -6,14 +6,14 @@ function Write-AppGetterLog {
         [scriptblock]$OnProgress
     )
 
-    $event = @{
+    $logEvent = @{
         Level   = $Level
         Message = $Message
         Time    = Get-Date
     }
 
     if ($OnProgress) {
-        & $OnProgress $event
+        & $OnProgress $logEvent
     }
 
     switch ($Level) {
@@ -41,7 +41,7 @@ function Write-AppGetterProgress {
         $Percent = [math]::Min(100, [math]::Round(($Step / $TotalSteps) * 100))
     }
 
-    $event = @{
+    $progressEvent = @{
         Type       = 'Progress'
         Step       = $Step
         TotalSteps = $TotalSteps
@@ -53,7 +53,7 @@ function Write-AppGetterProgress {
     }
 
     if ($OnProgress) {
-        & $OnProgress $event
+        & $OnProgress $progressEvent
     }
 }
 

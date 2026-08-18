@@ -243,6 +243,8 @@ function New-AppGetterReadmeMarkdown {
         [string]$InstallerInstallCommand,
         [string]$UninstallCommandLine,
         [string]$FinalDownloadUrl,
+        [string]$SourceType,
+        [string]$SourceLocation,
         [string]$DetectionType,
         [bool]$HasIcon,
         [pscustomobject]$SwitchDiscoveryResult
@@ -250,6 +252,8 @@ function New-AppGetterReadmeMarkdown {
 
     $generatedAt = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $installCommandLine = Get-IntuneInstallCommandLine
+    $sourceLabel = Get-AppGetterSourceLabel -SourceType $SourceType
+    $sourceValue = if ($SourceLocation) { $SourceLocation } else { $FinalDownloadUrl }
 
     $switchDiscoverySection = ''
     if ($SwitchDiscoveryResult) {
@@ -307,7 +311,8 @@ Use this section when creating or reviewing the Win32 app in the Microsoft Intun
 | **App version / Display version** | $($PackageDetails.Version) |
 | **Package ID** | ``$($PackageDetails.PackageId)`` |
 | **Information URL** | $($PackageDetails.Homepage) |
-| **Download URL** | $FinalDownloadUrl |
+| **Installer source** | $sourceLabel |
+| **Installer location** | $sourceValue |
 | **Install command** | ``$installCommandLine`` |
 | **Uninstall command** | ``$UninstallCommandLine`` |
 | **Setup file / Installer file name** | ``$InstallerFileName`` |
@@ -374,6 +379,17 @@ The detection script checks Windows uninstall registry keys (64-bit and 32-bit W
 "@
 }
 
+function Get-AppGetterSourceLabel {
+    param([string]$SourceType)
+
+    switch ($SourceType) {
+        'LocalFile' { return 'Local installer file on the packaging computer' }
+        'DownloadUrl' { return 'Direct download URL' }
+        'Website' { return 'Download link found by scanning a website' }
+        default { return 'Direct download URL' }
+    }
+}
+
 function New-AppGetterMetadataFiles {
     param(
         [pscustomobject]$PackageDetails,
@@ -386,11 +402,15 @@ function New-AppGetterMetadataFiles {
         [string]$UninstallScript,
         [string]$IconFilePath,
         [string]$FinalDownloadUrl,
+        [string]$SourceType,
+        [string]$SourceLocation,
         [pscustomobject]$SwitchDiscoveryResult
     )
 
     $uninstallCommandLine = Get-IntuneUninstallCommandLine
     $installCommandLine = Get-IntuneInstallCommandLine
+    $sourceLabel = Get-AppGetterSourceLabel -SourceType $SourceType
+    $sourceValue = if ($SourceLocation) { $SourceLocation } else { $FinalDownloadUrl }
     $intuneWinFileName = "$([System.IO.Path]::GetFileNameWithoutExtension($InstallerFileName)).intunewin"
 
     $installScriptPath = Join-Path $VersionDirectory 'install.ps1'
@@ -408,18 +428,20 @@ function New-AppGetterMetadataFiles {
     $readme = New-AppGetterReadmeMarkdown -PackageDetails $PackageDetails -InstallerFileName $InstallerFileName `
         -InstallerHash $InstallerHash -IntuneWinFileName $intuneWinFileName `
         -InstallerInstallCommand $InstallerInstallCommand -UninstallCommandLine $uninstallCommandLine `
-        -FinalDownloadUrl $FinalDownloadUrl -DetectionType 'PowerShell script (registry-based version check)' `
+        -FinalDownloadUrl $FinalDownloadUrl -SourceType $SourceType -SourceLocation $SourceLocation `
+        -DetectionType 'PowerShell script (registry-based version check)' `
         -HasIcon $hasIcon -SwitchDiscoveryResult $SwitchDiscoveryResult
     $readme | Set-Content -Path $readmePath -Encoding UTF8
 
     $legacyReadme = @"
-Package $($PackageDetails.PackageId) $($PackageDetails.Version) from Web Download
+Package $($PackageDetails.PackageId) $($PackageDetails.Version)
 
 Display name: $($PackageDetails.DisplayName)
 Version: $($PackageDetails.Version)
 Publisher: $($PackageDetails.Publisher)
 Website: $($PackageDetails.Homepage)
-Download URL: $FinalDownloadUrl
+Installer source: $sourceLabel
+Installer location: $sourceValue
 
 Install command (Intune):
 $installCommandLine
@@ -443,6 +465,8 @@ See README.md for full Intune upload reference.
         supportUrl           = if ($PackageDetails.SupportUrl) { $PackageDetails.SupportUrl } else { $PackageDetails.Homepage }
         installerType        = 7
         installerUrl         = $FinalDownloadUrl
+        installerSourceType  = if ($SourceType) { $SourceType } else { 'DownloadUrl' }
+        installerSourcePath  = $sourceValue
         hash                 = $InstallerHash
         installCommandLine   = $installCommandLine
         uninstallCommandLine = $uninstallCommandLine
