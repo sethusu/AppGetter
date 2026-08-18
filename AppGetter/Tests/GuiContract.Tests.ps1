@@ -78,7 +78,7 @@ Describe 'AppGetter GUI and executable deployment contract' {
         It 'calls the module functions it depends on' {
             foreach ($functionName in @(
                     'Invoke-AppGetterPackaging', 'Test-AppGetterPrerequisites', 'Install-AppGetterContentPrepTool',
-                    'Get-AppGetterAppOutputPath', 'Get-AppGetterBaseOutputPath', 'Find-WebDownloadLinks',
+                    'Get-AppGetterAppOutputPath', 'Get-AppGetterBaseOutputPath', 'Get-AppGetterDownloadLinkList',
                     'Set-AppGetterPackageIconFiles')) {
                 $script:guiScriptText | Should -Match ([regex]::Escape($functionName))
             }
@@ -89,10 +89,99 @@ Describe 'AppGetter GUI and executable deployment contract' {
             foreach ($functionName in @(
                     'Invoke-AppGetterPackaging', 'Test-AppGetterPrerequisites', 'Install-AppGetterContentPrepTool',
                     'Get-AppGetterAppOutputPath', 'Get-AppGetterBaseOutputPath', 'Get-AppGetterSettings',
-                    'Save-AppGetterSettings', 'Find-WebDownloadLinks', 'Get-PackageIdFromAppName',
+                    'Save-AppGetterSettings', 'Find-WebDownloadLinks', 'Get-AppGetterDownloadLinkList',
+                    'Get-PackageIdFromAppName',
                     'Get-AppGetterInstallerFileNameFromUrl', 'Set-AppGetterPackageIconFiles')) {
                 $manifest.FunctionsToExport | Should -Contain $functionName
             }
+        }
+    }
+
+    Context 'progress contract behind the step list' {
+        BeforeAll {
+            Import-Module (Join-Path $script:appGetterRoot 'AppGetter.psd1') -Force
+
+            $labelBlock = [regex]::Match($script:guiScriptText, '\$script:StepLabels = @\(([\s\S]*?)\r?\n\)')
+            $script:stepLabelCount = ([regex]::Matches($labelBlock.Groups[1].Value, "'[^']+'")).Count
+
+            $script:progressRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('AppGetterProgressTests-' + [Guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $script:progressRoot -Force | Out-Null
+            $script:originalAppData = $env:APPDATA
+            $env:APPDATA = Join-Path $script:progressRoot 'appdata'
+
+            $installer = Join-Path $script:progressRoot 'progress-setup-1.0.0.exe'
+            Set-Content -Path $installer -Value 'MZ progress test installer' -Encoding ASCII
+
+            $icon = Join-Path $script:progressRoot 'icon.png'
+            $pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+            [System.IO.File]::WriteAllBytes($icon, [Convert]::FromBase64String($pngBase64))
+
+            # Mirror the GUI: package in a background runspace and collect events from a queue.
+            $queue = New-Object System.Collections.Concurrent.ConcurrentQueue[object]
+            $runspace = [runspacefactory]::CreateRunspace()
+            $runspace.Open()
+            $powershell = [powershell]::Create()
+            $powershell.Runspace = $runspace
+            $null = $powershell.AddScript({
+                    param($ModulePath, $Arguments, $Queue)
+                    Import-Module $ModulePath -Force
+                    $onProgress = {
+                        param($ProgressEvent)
+                        $null = $Queue.Enqueue($ProgressEvent)
+                    }
+                    $params = $Arguments.Clone()
+                    $params.OnProgress = $onProgress
+                    Invoke-AppGetterPackaging @params
+                }).AddArgument((Join-Path $script:appGetterRoot 'AppGetter.psd1')).
+            AddArgument(@{
+                    AppName       = 'Progress Probe'
+                    InstallerPath = $installer
+                    OutputPath    = (Join-Path $script:progressRoot 'out')
+                    IconPath      = $icon
+                }).
+            AddArgument($queue)
+
+            $asyncResult = $powershell.BeginInvoke()
+            $script:packagingResult = $powershell.EndInvoke($asyncResult) | Select-Object -First 1
+            $powershell.Dispose()
+            $runspace.Close()
+
+            $script:progressEvents = @()
+            $item = $null
+            while ($queue.TryDequeue([ref]$item)) {
+                $script:progressEvents += , $item
+            }
+        }
+
+        AfterAll {
+            $env:APPDATA = $script:originalAppData
+            if ($script:progressRoot -and (Test-Path $script:progressRoot)) {
+                Remove-Item -Path $script:progressRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'packages successfully inside a background runspace' {
+            $script:packagingResult.Success | Should -BeTrue
+            $script:packagingResult.SourceType | Should -Be 'LocalFile'
+        }
+
+        It 'emits a progress event for every step in the GUI step list' {
+            $script:stepLabelCount | Should -BeGreaterThan 0
+            $steps = @($script:progressEvents | Where-Object { $_.Type -eq 'Progress' } | ForEach-Object { $_.Step } | Sort-Object -Unique)
+            foreach ($step in 1..$script:stepLabelCount) {
+                $steps | Should -Contain $step
+            }
+        }
+
+        It 'never reports a step number the step list cannot display' {
+            $maxStep = ($script:progressEvents | Where-Object { $_.Type -eq 'Progress' } | Measure-Object -Property Step -Maximum).Maximum
+            $maxStep | Should -BeLessOrEqual $script:stepLabelCount
+        }
+
+        It 'finishes at 100 percent with a Completed status' {
+            $final = @($script:progressEvents | Where-Object { $_.Type -eq 'Progress' })[-1]
+            $final.Percent | Should -Be 100
+            $final.Status | Should -Be 'Completed'
         }
     }
 
