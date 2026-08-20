@@ -23,6 +23,8 @@ For each application, AppGetter produces:
 | `README.md` | Copy/paste reference for every Intune portal field |
 | `logo.png` / `icon.png` | App icon for Intune upload |
 | `app.json` / `win32LobApp.json` | Metadata exports |
+| `validation.json` | Written after a successful Test in Sandbox run |
+| `sandbox-test-report.txt` | Chat-ready sandbox log (after Test in Sandbox) |
 
 ---
 
@@ -63,9 +65,20 @@ Or launch the GUI directly:
 3. Enter the **application name** and one of: a **website URL** (to scan for download links), a **direct download URL**, or a **local installer file** (Browse...).
 4. Choose an **output folder** — each app gets its own subfolder (default: `Documents\AppGetter\{App}`).
 5. Click **Create Package** and watch the live progress steps (the window stays responsive while packaging runs in the background).
-6. Open the output folder and upload the `.intunewin` to Intune using the included `README.md` as your field guide.
+6. Optionally click **Test in Sandbox** to confirm install, detection, and uninstall inside Windows Sandbox before uploading to Intune.
+7. Open the output folder and upload the `.intunewin` to Intune using the included `README.md` as your field guide.
 
 If the Content Prep Tool is missing, the header shows an **Install Content Prep** button that installs `intunewinapputil` via winget.
+
+### Test in Sandbox
+
+After a package is created (or when the output folder already contains `install.ps1`, `detection.ps1`, and `uninstall.ps1`), use **Test in Sandbox** to:
+
+1. Launch Windows Sandbox with the package folder mapped in
+2. Run `install.ps1`, confirm the step, then `detection.ps1`, then `uninstall.ps1`
+3. Mark the package validated only when all three steps succeed and the install stayed silent (no installer UI)
+
+Requires Windows 10/11 Pro, Enterprise, or Education with Windows Sandbox enabled. The dialog can prompt to enable the feature (admin approval; usually a reboot). Diagnostics are written next to the package as `sandbox-test-report.txt`, `sandbox-failure.log`, and `sandbox-logs\`.
 
 ---
 
@@ -178,7 +191,12 @@ AppGetter/
 ├── Private/                           ← Packaging, web download, icons, scripts
 ├── Gui/
 │   ├── Start-AppGetterGui.ps1
-│   └── AppGetter.MainWindow.xaml      ← WPF UI
+│   ├── AppGetter.MainWindow.xaml      ← WPF UI
+│   └── AppGetter.SandboxTestDialog.xaml
+├── Private/
+│   └── Sandbox.ps1                    ← Windows Sandbox install/detect/uninstall test
+├── Tests/
+│   └── Sandbox.Tests.ps1
 ├── Build/
 │   └── Build-AppGetterExe.ps1         ← Builds AppGetter.exe + portable zip
 └── Example-Usage.ps1
@@ -207,6 +225,8 @@ Install-AppGetterContentPrepTool   # installs intunewinapputil via winget if mis
 | No download links found | Provide a direct `-DownloadUrl` or a local `-InstallerPath` instead of `-WebsiteUrl` |
 | `AppGetter.exe` won't start | Check `%TEMP%\AppGetter-launch.log`; use `Start-AppGetter.cmd` or `Launch-AppGetter.ps1` instead |
 | Packaging failed | Check `appgetter-packaging.log` in the version output folder and the GUI log panel |
+| Test in Sandbox unavailable | Needs Windows Pro/Enterprise/Education with Sandbox enabled; Home is not supported |
+| Sandbox install showed a dialog | Install was not silent — see `sandbox-failure.log` and re-package with better switches |
 | Detection fails on devices | Run `detection.ps1` locally; review logs in `%ProgramData%\Microsoft\IntuneManagementExtension\Logs\` |
 | GUI won't start | Run from PowerShell 5.1+ on Windows; WPF requires a desktop session |
 

@@ -1,5 +1,17 @@
 # AppGetter Changelog
 
+## Version 2.2.0 - 2026-08-20
+
+### Test in Sandbox
+- Added a **Test in Sandbox** button that launches Windows Sandbox against the packaged app folder (mirrors Wingetter)
+- Checks whether Windows Sandbox (`Containers-DisposableClientVM`) is enabled; if it is not, prompts to enable it (administrator approval, usually a reboot)
+- Inside the sandbox, runs `install.ps1`, then `detection.ps1`, then `uninstall.ps1`, waiting for host confirmation after each step
+- Marks the package validated (`validation.json` plus `sandboxValidated` on `app.json`) only when install, detect, and uninstall are all confirmed and the install stayed silent
+- Watches for installer dialogs; if one appears, screenshots the desktop, stops the hung installer, and refuses to mark the package validated
+- Writes chat-ready `sandbox-test-report.txt` and `sandbox-failure.log` (plus `sandbox-logs\`) into the package folder
+- Windows Home and non-Windows hosts get a clear unsupported message instead of a failed launch
+- Pester coverage under `Tests/Sandbox.Tests.ps1` (run via `Run-Tests.ps1`)
+
 ## Version 2.1 - Unreleased
 
 ### Wingetter UI parity and executable deployment

@@ -335,6 +335,8 @@ $switchDiscoverySection
 | ``win32LobApp.json`` | Microsoft Graph ``win32LobApp`` definition |
 | ``README.md`` | This documentation file |
 | ``icon.png`` | Application icon for Intune upload (if available) |
+| ``sandbox-test-report.txt`` | Chat-ready Windows Sandbox test log (created after Test in Sandbox) |
+| ``sandbox-failure.log`` | Sandbox failure summary written into the package folder |
 | ``appgetter-packaging.log`` | Packaging run log (created on failure) |
 
 ## Install Command (raw installer)
@@ -368,9 +370,10 @@ The detection script checks Windows uninstall registry keys (64-bit and 32-bit W
 ## Next Steps
 
 1. Review ``install.ps1``, ``uninstall.ps1``, and ``detection.ps1``.
-2. Upload ``$IntuneWinFileName`` to Intune (**Apps** → **Windows** → **Add** → **Windows app (Win32)**).
-3. Use the values in the table above when completing the Intune wizard.
-4. Assign the app to a test group before broad deployment.
+2. Optionally use **Test in Sandbox** in AppGetter to confirm install, detection, and uninstall.
+3. Upload ``$IntuneWinFileName`` to Intune (**Apps** → **Windows** → **Add** → **Windows app (Win32)**).
+4. Use the values in the table above when completing the Intune wizard.
+5. Assign the app to a test group before broad deployment.
 "@
 }
 
