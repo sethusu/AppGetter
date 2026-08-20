@@ -31,6 +31,10 @@ Non-obvious caveats when running on Linux:
   external prerequisite, not part of this repo. On Linux this step fails gracefully — the
   script still produces every other file and exits 0. Everything except the final
   `.intunewin` archive can be exercised on Linux.
+- **Test in Sandbox** is Windows-only (Windows Sandbox / `Containers-DisposableClientVM`). On Linux,
+  `Test-AppGetterWindowsSandbox` reports unsupported; host-side helpers and Pester tests under
+  `AppGetter/Tests/Sandbox.Tests.ps1` still run.
 
-There are no automated tests. Validate changes by running the script end-to-end against a
-real direct download URL and inspecting the generated files.
+Automated tests (optional): `pwsh -NoProfile -File AppGetter/Run-Tests.ps1`
+Validate packaging changes by running the script end-to-end against a real direct download URL
+and inspecting the generated files.
