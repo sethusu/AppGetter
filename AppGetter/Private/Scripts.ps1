@@ -462,7 +462,36 @@ See README.md for full Intune upload reference.
             needsManualReview   = $SwitchDiscoveryResult.NeedsManualReview
             evidenceSummary     = $SwitchDiscoveryResult.EvidenceSummary
             alternativeCommands = $SwitchDiscoveryResult.AlternativeCommands
+            recommendedCommand  = $SwitchDiscoveryResult.RecommendedCommand
+            installerHash       = $SwitchDiscoveryResult.InstallerHash
+            usedCache           = [bool]$SwitchDiscoveryResult.UsedCache
+            verificationMethod  = if ($SwitchDiscoveryResult.Verification -and $SwitchDiscoveryResult.Verification.Method) {
+                [string]$SwitchDiscoveryResult.Verification.Method
+            } else {
+                $null
+            }
         }
+
+        $silentManifest = [ordered]@{
+            engine              = $SwitchDiscoveryResult.InstallerFamily
+            primaryType         = $SwitchDiscoveryResult.PrimaryType
+            confidenceScore     = $SwitchDiscoveryResult.ConfidenceScore
+            command             = $SwitchDiscoveryResult.RecommendedCommand
+            verified            = [bool]$SwitchDiscoveryResult.Verified
+            needsManualReview   = [bool]$SwitchDiscoveryResult.NeedsManualReview
+            evidenceSummary     = @($SwitchDiscoveryResult.EvidenceSummary)
+            alternativeCommands = @($SwitchDiscoveryResult.AlternativeCommands)
+            installerHash       = $SwitchDiscoveryResult.InstallerHash
+            usedCache           = [bool]$SwitchDiscoveryResult.UsedCache
+            verificationMethod  = if ($SwitchDiscoveryResult.Verification -and $SwitchDiscoveryResult.Verification.Method) {
+                [string]$SwitchDiscoveryResult.Verification.Method
+            } else {
+                $null
+            }
+            generatedAt         = (Get-Date).ToUniversalTime().ToString('o')
+        }
+        $silentManifest | ConvertTo-Json -Depth 8 |
+            Set-Content -Path (Join-Path $VersionDirectory 'silent-switches.json') -Encoding UTF8
     }
     $appJson | ConvertTo-Json -Depth 10 | Set-Content -Path $appJsonPath -Encoding UTF8
 

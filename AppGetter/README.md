@@ -24,6 +24,7 @@ For each application, AppGetter produces:
 | `logo.png` / `icon.png` | App icon for Intune upload |
 | `app.json` / `win32LobApp.json` | Metadata exports |
 | `validation.json` | Written after a successful Test in Sandbox run |
+| `silent-switches.json` | Silent-switch discovery result (command, confidence, verified flag) |
 | `sandbox-test-report.txt` | Chat-ready sandbox log (after Test in Sandbox) |
 
 ---
@@ -174,6 +175,7 @@ Default output path and last-used settings are saved to:
 | **OutputPath** | Base output directory |
 | **IconPath** | Custom PNG icon |
 | **InstallCommand** | Custom install command (auto-detected if omitted) |
+| **VerifySilentSwitches** | Trial ranked silent-switch candidates in Windows Sandbox during packaging |
 | **UseGui** | Launch the WPF GUI |
 
 ---

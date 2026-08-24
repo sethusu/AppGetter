@@ -309,11 +309,157 @@ function Find-InstallerSwitchCandidates {
     }
 
     $sorted = @($candidates | Sort-Object { $_.Score } -Descending)
-    if ($sorted.Count -eq 1) {
-        return ,$sorted
+    # Always return a Object[] of hashtables (never a bare hashtable or nested array).
+    $result = [System.Collections.Generic.List[hashtable]]::new()
+    foreach ($item in $sorted) {
+        if ($item -is [hashtable]) {
+            $result.Add($item) | Out-Null
+        }
+    }
+    return ,$result.ToArray()
+}
+
+function Get-AppGetterSilentSwitchCachePath {
+    return (Join-Path (Get-AppGetterConfigRoot) 'silent-switch-cache.json')
+}
+
+function Get-AppGetterSilentSwitchCache {
+    $path = Get-AppGetterSilentSwitchCachePath
+    if (-not (Test-Path -LiteralPath $path)) {
+        return @{}
     }
 
-    return $sorted
+    try {
+        $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json
+        $map = @{}
+        foreach ($prop in $raw.PSObject.Properties) {
+            $map[$prop.Name] = $prop.Value
+        }
+        return $map
+    } catch {
+        return @{}
+    }
+}
+
+function Get-AppGetterSilentSwitchCacheEntry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerHash
+    )
+
+    if ([string]::IsNullOrWhiteSpace($InstallerHash)) {
+        return $null
+    }
+
+    $cache = Get-AppGetterSilentSwitchCache
+    $key = $InstallerHash.ToUpperInvariant()
+    if (-not $cache.ContainsKey($key)) {
+        return $null
+    }
+
+    return $cache[$key]
+}
+
+function Set-AppGetterSilentSwitchCacheEntry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerHash,
+        [Parameter(Mandatory = $true)]
+        [string]$VerifiedSilentCommand,
+        [string]$ProductName = '',
+        [string]$Version = '',
+        [object]$ExitCodeObserved = $null,
+        [string]$InstallerFamily = '',
+        [string[]]$EvidenceSummary = @()
+    )
+
+    if ([string]::IsNullOrWhiteSpace($InstallerHash) -or [string]::IsNullOrWhiteSpace($VerifiedSilentCommand)) {
+        return
+    }
+
+    $path = Get-AppGetterSilentSwitchCachePath
+    $directory = Split-Path -Path $path -Parent
+    if ($directory -and -not (Test-Path -LiteralPath $directory)) {
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    }
+
+    $cache = Get-AppGetterSilentSwitchCache
+    $key = $InstallerHash.ToUpperInvariant()
+    $cache[$key] = [ordered]@{
+        InstallerHash          = $key
+        ProductName            = $ProductName
+        Version                = $Version
+        VerifiedSilentCommand  = $VerifiedSilentCommand
+        ExitCodeObserved       = $ExitCodeObserved
+        InstallerFamily        = $InstallerFamily
+        EvidenceSummary        = @($EvidenceSummary)
+        VerificationDate       = (Get-Date).ToUniversalTime().ToString('o')
+        VerificationHostInfo   = [ordered]@{
+            OSVersion = [string][System.Environment]::OSVersion.VersionString
+            MachineName = [string][System.Environment]::MachineName
+            IsWindows = [bool]([System.Environment]::OSVersion.Platform -eq 'Win32NT')
+        }
+    }
+
+    ($cache | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $path -Encoding UTF8
+}
+
+function Find-WingetSilentSwitchCandidate {
+    param(
+        [string]$AppName,
+        [string]$InstallerFileName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($AppName)) {
+        return $null
+    }
+
+    if ([System.Environment]::OSVersion.Platform -ne 'Win32NT') {
+        return $null
+    }
+
+    $winget = $null
+    try {
+        $winget = Get-AppGetterWingetExecutable
+    } catch {
+        return $null
+    }
+    if (-not $winget) {
+        return $null
+    }
+
+    try {
+        $showOutput = & $winget show --name $AppName --accept-source-agreements 2>&1 | Out-String
+        if ([string]::IsNullOrWhiteSpace($showOutput)) {
+            return $null
+        }
+
+        $silent = $null
+        if ($showOutput -match '(?im)Silent:\s*(.+)$') {
+            $silent = $Matches[1].Trim()
+        } elseif ($showOutput -match '(?im)SilentWithProgress:\s*(.+)$') {
+            $silent = $Matches[1].Trim()
+        }
+
+        if ([string]::IsNullOrWhiteSpace($silent)) {
+            return $null
+        }
+
+        $command = if ($silent -match [regex]::Escape($InstallerFileName) -or $silent -match 'msiexec') {
+            $silent
+        } else {
+            "`"$InstallerFileName`" $silent"
+        }
+
+        return @{
+            Command  = $command
+            Score    = 45
+            Source   = 'winget-catalog'
+            Evidence = "winget show reported silent switches for '$AppName': $silent"
+        }
+    } catch {
+        return $null
+    }
 }
 
 function Test-InstallerCommand {
@@ -321,25 +467,39 @@ function Test-InstallerCommand {
         [Parameter(Mandatory = $true)]
         [string]$InstallerPath,
         [Parameter(Mandatory = $true)]
-        [string]$Command
+        [string]$Command,
+        [string]$AppName = '',
+        [switch]$AllowSandboxVerification,
+        [int]$TimeoutSeconds = 900,
+        [switch]$SkipLaunch
     )
 
-    if (-not $IsWindows) {
+    if (-not $AllowSandboxVerification) {
         return [PSCustomObject]@{
             Verified   = $false
             ExitCode   = $null
-            Message    = 'Runtime verification requires Windows and was skipped on this host.'
+            Message    = 'Sandbox verification was not requested for this packaging run.'
             Observable = $null
+            Method     = $null
         }
     }
 
-    Write-AppGetterLog -Message "Installer command verification is not yet automated; command marked unverified: $Command" -Level Warning
-    return [PSCustomObject]@{
-        Verified   = $false
-        ExitCode   = $null
-        Message    = 'Automated verification runner is not configured on this host.'
-        Observable = $null
+    if ([System.Environment]::OSVersion.Platform -ne 'Win32NT') {
+        return [PSCustomObject]@{
+            Verified   = $false
+            ExitCode   = $null
+            Message    = 'Runtime verification requires Windows Sandbox and was skipped on this host.'
+            Observable = $null
+            Method     = $null
+        }
     }
+
+    return Test-InstallerCommandInSandbox `
+        -InstallerPath $InstallerPath `
+        -Command $Command `
+        -AppName $AppName `
+        -TimeoutSeconds $TimeoutSeconds `
+        -SkipLaunch:$SkipLaunch
 }
 
 function Resolve-InstallerInstallCommand {
@@ -351,39 +511,167 @@ function Resolve-InstallerInstallCommand {
         [string]$AppName,
         [hashtable]$InstallSwitchesInfo,
         [string]$SupportUrl,
-        [switch]$SkipVerification
+        [switch]$SkipVerification,
+        [switch]$VerifySilentSwitches,
+        [int]$MaxCandidatesToVerify = 3,
+        [int]$TimeoutSeconds = 900,
+        [string]$InstallerHash
     )
 
-    $fingerprint = Get-InstallerFingerprint -InstallerPath $InstallerPath
-    $candidates = @(Find-InstallerSwitchCandidates -Fingerprint $fingerprint `
-        -InstallerFileName $InstallerFileName -InstallSwitchesInfo $InstallSwitchesInfo)
+    if (-not $InstallerHash -and (Test-Path -LiteralPath $InstallerPath)) {
+        try {
+            $InstallerHash = (Get-FileHash -Path $InstallerPath -Algorithm SHA256).Hash
+        } catch {
+            $InstallerHash = $null
+        }
+    }
 
-    $recommended = if ($candidates.Count -gt 0) { $candidates[0] } else { $null }
-    $confidenceScore = if ($recommended) { $recommended.Score } else { 0 }
+    $fingerprint = Get-InstallerFingerprint -InstallerPath $InstallerPath
+    $foundCandidates = Find-InstallerSwitchCandidates -Fingerprint $fingerprint `
+        -InstallerFileName $InstallerFileName -InstallSwitchesInfo $InstallSwitchesInfo
+    $candidateArray = @()
+    foreach ($item in @($foundCandidates)) {
+        if ($item -is [hashtable] -and $item.ContainsKey('Command')) {
+            $candidateArray += ,$item
+        }
+    }
+
+    $wingetCandidate = Find-WingetSilentSwitchCandidate -AppName $AppName -InstallerFileName $InstallerFileName
+    if ($wingetCandidate) {
+        $exists = $false
+        foreach ($existing in $candidateArray) {
+            if ([string]::Equals($existing.Command, $wingetCandidate.Command, [StringComparison]::OrdinalIgnoreCase)) {
+                $existing.Score = [Math]::Max([int]$existing.Score, [int]$wingetCandidate.Score)
+                $existing.Evidence = "$($existing.Evidence); $($wingetCandidate.Evidence)"
+                $exists = $true
+                break
+            }
+        }
+        if (-not $exists) {
+            $candidateArray += ,$wingetCandidate
+        }
+        $candidateArray = @($candidateArray | Sort-Object { $_.Score } -Descending)
+    }
+
+    $recommended = if ($candidateArray.Count -gt 0) { $candidateArray[0] } else { $null }
+    $confidenceScore = if ($recommended) { [int]$recommended.Score } else { 0 }
     $confidenceScore = [Math]::Min(100, $confidenceScore + [Math]::Min(15, [int]($fingerprint.Confidence / 10)))
+
+    $evidenceSummary = [System.Collections.Generic.List[string]]::new()
+    foreach ($item in @($fingerprint.DetectionEvidence)) {
+        $evidenceSummary.Add([string]$item) | Out-Null
+    }
+    if ($recommended) {
+        $evidenceSummary.Add("$($recommended.Source): $($recommended.Evidence) (score $($recommended.Score))") | Out-Null
+    }
+    if ($SupportUrl) {
+        $evidenceSummary.Add("Support URL consulted: $SupportUrl") | Out-Null
+    }
 
     $verification = $null
     $verified = $false
-    if ($recommended -and -not $SkipVerification) {
-        $verification = Test-InstallerCommand -InstallerPath $InstallerPath -Command $recommended.Command
-        $verified = [bool]$verification.Verified
+    $verificationAttempts = @()
+
+    $cached = $null
+    if ($InstallerHash) {
+        $cached = Get-AppGetterSilentSwitchCacheEntry -InstallerHash $InstallerHash
+    }
+    if ($cached -and $cached.VerifiedSilentCommand) {
+        $recommendedCommand = [string]$cached.VerifiedSilentCommand
+        $verified = $true
+        $confidenceScore = [Math]::Min(100, [Math]::Max($confidenceScore, 90))
+        $evidenceSummary.Add("Reused SHA-256 cache entry verified on $($cached.VerificationDate)") | Out-Null
+        $verification = [PSCustomObject]@{
+            Verified   = $true
+            ExitCode   = $cached.ExitCodeObserved
+            Message    = "Loaded verified silent command from local cache for hash $InstallerHash."
+            Observable = $cached
+            Method     = 'Cache'
+        }
+
+        $alternativeCommands = @($candidateArray | ForEach-Object { $_.Command } |
+                Where-Object { -not [string]::Equals($_, $recommendedCommand, [StringComparison]::OrdinalIgnoreCase) })
+
+        return [PSCustomObject]@{
+            RecommendedCommand    = $recommendedCommand
+            AlternativeCommands   = @($alternativeCommands)
+            ConfidenceScore       = $confidenceScore
+            EvidenceSummary       = @($evidenceSummary)
+            NeedsManualReview     = $false
+            Verified              = $true
+            InstallerFamily       = if ($fingerprint.Families.Count -gt 0) { ($fingerprint.Families -join ', ') } else { $fingerprint.PrimaryType }
+            PrimaryType           = $fingerprint.PrimaryType
+            Fingerprint           = $fingerprint
+            Candidates            = $candidateArray
+            Verification          = $verification
+            VerificationAttempts  = @()
+            InstallerHash         = $InstallerHash
+            UsedCache             = $true
+        }
+    }
+
+    $sandboxAvailable = $false
+    if ([System.Environment]::OSVersion.Platform -eq 'Win32NT') {
+        try {
+            $sandboxAvailable = [bool](Test-AppGetterWindowsSandbox).Enabled
+        } catch {
+            $sandboxAvailable = $false
+        }
+    }
+
+    $familyCount = @($fingerprint.Families | Where-Object { $_ -and $_ -ne 'msi-bridge' }).Count
+    $ambiguous = $familyCount -gt 1 -or $fingerprint.Confidence -lt 40
+    $shouldVerify = (-not $SkipVerification) -and (
+        $VerifySilentSwitches -or
+        (($confidenceScore -lt 70 -or $ambiguous) -and $sandboxAvailable)
+    )
+
+    if ($recommended -and $shouldVerify) {
+        $maxTry = [Math]::Max(1, [int]$MaxCandidatesToVerify)
+        $toTry = @($candidateArray | Select-Object -First $maxTry)
+        foreach ($candidate in $toTry) {
+            Write-AppGetterLog -Message "Sandbox-verifying silent candidate: $($candidate.Command)" -Level Info
+            $attempt = Test-InstallerCommand `
+                -InstallerPath $InstallerPath `
+                -Command $candidate.Command `
+                -AppName $AppName `
+                -AllowSandboxVerification `
+                -TimeoutSeconds $TimeoutSeconds
+            $verificationAttempts += ,[PSCustomObject]@{
+                Command = $candidate.Command
+                Source = $candidate.Source
+                Score = $candidate.Score
+                Result = $attempt
+            }
+            if ($attempt -and $attempt.Verified) {
+                $recommended = $candidate
+                $verification = $attempt
+                $verified = $true
+                $confidenceScore = [Math]::Min(100, [Math]::Max($confidenceScore, 90))
+                $evidenceSummary.Add("Sandbox verified: $($attempt.Message)") | Out-Null
+                break
+            } elseif ($attempt -and $attempt.Message) {
+                $evidenceSummary.Add("Sandbox rejected '$($candidate.Command)': $($attempt.Message)") | Out-Null
+            }
+        }
+
+        if (-not $verified -and $verificationAttempts.Count -gt 0) {
+            $verification = $verificationAttempts[-1].Result
+        }
+    } elseif ($recommended -and -not $SkipVerification -and -not $shouldVerify) {
+        $verification = Test-InstallerCommand -InstallerPath $InstallerPath -Command $recommended.Command -AppName $AppName
+        if ($verification -and $verification.Message) {
+            $evidenceSummary.Add($verification.Message) | Out-Null
+        }
     }
 
     $needsManualReview = $confidenceScore -lt 70 -or -not $verified
-    $evidenceSummary = @($fingerprint.DetectionEvidence)
-    if ($recommended) {
-        $evidenceSummary += "$($recommended.Source): $($recommended.Evidence) (score $($recommended.Score))"
-    }
-    if ($SupportUrl) {
-        $evidenceSummary += "Support URL consulted: $SupportUrl"
-    }
-    if ($verification -and $verification.Message) {
-        $evidenceSummary += $verification.Message
-    }
 
     $alternativeCommands = @()
-    if ($candidates.Count -gt 1) {
-        $alternativeCommands = @($candidates | Select-Object -Skip 1 | ForEach-Object { $_.Command })
+    if ($candidateArray.Count -gt 1) {
+        $chosen = if ($recommended) { $recommended.Command } else { $null }
+        $alternativeCommands = @($candidateArray | ForEach-Object { $_.Command } |
+                Where-Object { $chosen -and -not [string]::Equals($_, $chosen, [StringComparison]::OrdinalIgnoreCase) })
     }
 
     $recommendedCommand = if ($recommended) {
@@ -392,6 +680,16 @@ function Resolve-InstallerInstallCommand {
         Get-InstallerInstallCommand -InstallerFileName $InstallerFileName `
             -InstallerExtension ([System.IO.Path]::GetExtension($InstallerFileName)) `
             -DetectedSwitch (Get-DetectedSilentSwitch -InstallSwitchesInfo $InstallSwitchesInfo)
+    }
+
+    if ($verified -and $InstallerHash) {
+        Set-AppGetterSilentSwitchCacheEntry `
+            -InstallerHash $InstallerHash `
+            -VerifiedSilentCommand $recommendedCommand `
+            -ProductName $AppName `
+            -ExitCodeObserved $(if ($verification) { $verification.ExitCode } else { $null }) `
+            -InstallerFamily $(if ($fingerprint.Families.Count -gt 0) { ($fingerprint.Families -join ', ') } else { $fingerprint.PrimaryType }) `
+            -EvidenceSummary @($evidenceSummary)
     }
 
     return [PSCustomObject]@{
@@ -404,7 +702,10 @@ function Resolve-InstallerInstallCommand {
         InstallerFamily       = if ($fingerprint.Families.Count -gt 0) { ($fingerprint.Families -join ', ') } else { $fingerprint.PrimaryType }
         PrimaryType           = $fingerprint.PrimaryType
         Fingerprint           = $fingerprint
-        Candidates            = $candidates
+        Candidates            = $candidateArray
         Verification          = $verification
+        VerificationAttempts  = @($verificationAttempts)
+        InstallerHash         = $InstallerHash
+        UsedCache             = $false
     }
 }

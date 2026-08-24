@@ -26,6 +26,9 @@
     Optional. Path to a custom PNG icon.
 .PARAMETER InstallCommand
     Optional. Custom install command.
+.PARAMETER VerifySilentSwitches
+    Optional. Run ranked silent-install candidates in Windows Sandbox during packaging
+    (also auto-runs when static confidence is low and Sandbox is available).
 .PARAMETER UseGui
     Launch the graphical interface instead of running in CLI mode.
 .EXAMPLE
@@ -74,6 +77,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$InstallCommand,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$VerifySilentSwitches,
 
     [Parameter(Mandatory = $false)]
     [switch]$UseGui
@@ -208,10 +214,24 @@ try {
         }
     }
 
-    $result = Invoke-AppGetterPackaging -AppName $AppName -WebsiteUrl $WebsiteUrl -DownloadUrl $DownloadUrl `
-        -InstallerPath $InstallerPath -DeveloperUrl $DeveloperUrl -SupportUrl $SupportUrl `
-        -Version $Version -Publisher $Publisher `
-        -OutputPath $OutputPath -IconPath $IconPath -InstallCommand $InstallCommand -OnProgress $onProgress
+    $packParams = @{
+        AppName       = $AppName
+        WebsiteUrl    = $WebsiteUrl
+        DownloadUrl   = $DownloadUrl
+        InstallerPath = $InstallerPath
+        DeveloperUrl  = $DeveloperUrl
+        SupportUrl    = $SupportUrl
+        Version       = $Version
+        Publisher     = $Publisher
+        OutputPath    = $OutputPath
+        IconPath      = $IconPath
+        InstallCommand = $InstallCommand
+        OnProgress    = $onProgress
+    }
+    if ($VerifySilentSwitches) {
+        $packParams.VerifySilentSwitches = $true
+    }
+    $result = Invoke-AppGetterPackaging @packParams
 
     if ($result.PackagingSucceeded) {
         Write-Host "`nPackage created successfully!" -ForegroundColor Green

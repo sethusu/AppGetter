@@ -13,6 +13,8 @@ function Invoke-AppGetterPackaging {
         [string]$OutputPath = (Get-AppGetterSettings).OutputPath,
         [string]$IconPath,
         [string]$InstallCommand,
+        [switch]$VerifySilentSwitches,
+        [int]$MaxCandidatesToVerify = 3,
         [scriptblock]$OnProgress
     )
 
@@ -106,15 +108,31 @@ function Invoke-AppGetterPackaging {
 
         $switchDiscoveryResult = $null
         if ([string]::IsNullOrWhiteSpace($InstallCommand)) {
-            $switchDiscoveryResult = Resolve-InstallerInstallCommand -InstallerPath $installerFile.FullName `
-                -InstallerFileName $installerFileName -AppName $AppName `
-                -InstallSwitchesInfo $details.InstallSwitchesInfo -SupportUrl $SupportUrl
+            if ($VerifySilentSwitches) {
+                Write-AppGetterLog -Message 'Silent switch Sandbox verification requested (-VerifySilentSwitches).' -OnProgress $OnProgress
+            }
+
+            $resolveParams = @{
+                InstallerPath           = $installerFile.FullName
+                InstallerFileName       = $installerFileName
+                AppName                 = $AppName
+                InstallSwitchesInfo     = $details.InstallSwitchesInfo
+                SupportUrl              = $SupportUrl
+                InstallerHash           = $installerHash
+                MaxCandidatesToVerify   = $MaxCandidatesToVerify
+            }
+            if ($VerifySilentSwitches) {
+                $resolveParams.VerifySilentSwitches = $true
+            }
+
+            $switchDiscoveryResult = Resolve-InstallerInstallCommand @resolveParams
 
             $installerInstallCommand = $switchDiscoveryResult.RecommendedCommand
 
             $reviewNote = if ($switchDiscoveryResult.NeedsManualReview) { ' (manual review recommended)' } else { '' }
             $verifiedNote = if ($switchDiscoveryResult.Verified) { 'verified' } else { 'unverified' }
-            Write-AppGetterLog -Message "Silent install discovery: family=$($switchDiscoveryResult.InstallerFamily), confidence=$($switchDiscoveryResult.ConfidenceScore), $verifiedNote$reviewNote" `
+            $cacheNote = if ($switchDiscoveryResult.UsedCache) { ', cache-hit' } else { '' }
+            Write-AppGetterLog -Message "Silent install discovery: family=$($switchDiscoveryResult.InstallerFamily), confidence=$($switchDiscoveryResult.ConfidenceScore), $verifiedNote$cacheNote$reviewNote" `
                 -Level $(if ($switchDiscoveryResult.NeedsManualReview) { 'Warning' } else { 'Success' }) -OnProgress $OnProgress
             Write-AppGetterLog -Message "Selected install command: $installerInstallCommand" -OnProgress $OnProgress
         } else {

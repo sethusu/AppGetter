@@ -1,5 +1,14 @@
 # AppGetter Changelog
 
+## Version 2.3.0 - Unreleased
+
+### Silent switch Sandbox research
+- Added Windows Sandbox **candidate trials** during discovery (`Test-InstallerCommandInSandbox`) that prove silence (no installer UI), accepted exit codes, and new ARP install evidence — not just post-package success
+- Packaging can force trials with `-VerifySilentSwitches` (CLI/GUI); trials also auto-run when static confidence is low/ambiguous and Sandbox is available
+- SHA-256 silent-switch cache under `%AppData%\AppGetter\silent-switch-cache.json`
+- Writes `silent-switches.json` next to each package; optional winget catalog hints as candidates
+- Pester coverage: `Tests/SwitchDiscovery.Tests.ps1` (Linux-safe corpus) and `-Tag SandboxLive` for live trial hosts
+
 ## Version 2.2.0 - 2026-08-20
 
 ### Test in Sandbox

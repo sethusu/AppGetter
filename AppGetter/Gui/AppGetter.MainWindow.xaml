@@ -55,6 +55,7 @@
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0" Grid.Column="0" Text="Application Name *" FontWeight="SemiBold" Margin="0,0,8,6"/>
@@ -96,6 +97,11 @@
           <TextBox x:Name="OutputPathBox" Height="30" VerticalContentAlignment="Center"
                    ToolTip="Base output folder. Each app gets its own subfolder."/>
         </DockPanel>
+
+        <CheckBox Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="2" x:Name="VerifySilentSwitchesCheckBox"
+                  Content="Verify silent install switches in Windows Sandbox (tries ranked candidates)"
+                  Margin="0,12,0,0"
+                  ToolTip="When checked, AppGetter trials top silent-switch candidates in Windows Sandbox during packaging. Also auto-runs when static confidence is low and Sandbox is available."/>
       </Grid>
     </Border>
 

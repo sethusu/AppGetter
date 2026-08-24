@@ -83,6 +83,35 @@ Describe 'New-AppGetterSandboxGuestScript' {
     }
 }
 
+Describe 'Sandbox silent-switch trial helpers' {
+    It 'Generates a trial guest script that watches UI and writes trial-result.json' {
+        $script = New-AppGetterSandboxTrialGuestScript
+        $script | Should -Match 'trial-result.json'
+        $script | Should -Match 'silentUiDetected'
+        $script | Should -Match 'Get-UninstallRegistrySnapshot'
+        $script | Should -Match 'interactive window'
+        $script | Should -Match 'NOT SILENT'
+    }
+
+    It 'Treats UI detection as verification failure even with exit code 0' {
+        InModuleScope AppGetter {
+            $mapped = ConvertTo-AppGetterInstallerVerification -TrialResult ([PSCustomObject]@{
+                    Verified = $false
+                    ExitCode = 0
+                    SilentUiDetected = $true
+                    Message = 'not silent'
+                    InstallEvidence = @(@{ DisplayName = 'App' })
+                    TimedOut = $false
+                    KilledForUi = $true
+                })
+            $mapped.Verified | Should -Be $false
+            $mapped.SilentUiDetected | Should -Be $true
+            Test-AppGetterAcceptedInstallExitCode -ExitCode 0 | Should -Be $true
+            Test-AppGetterAcceptedInstallExitCode -ExitCode 1618 | Should -Be $false
+        }
+    }
+}
+
 Describe 'Resolve-AppGetterPackageVersionDirectory' {
     BeforeAll {
         $script:packageRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("appgetter-sandbox-pkg-{0}" -f ([Guid]::NewGuid().ToString('N')))
