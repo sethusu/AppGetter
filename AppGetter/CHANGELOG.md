@@ -8,6 +8,7 @@
 - SHA-256 silent-switch cache under `%AppData%\AppGetter\silent-switch-cache.json`
 - Writes `silent-switches.json` next to each package; optional winget catalog hints as candidates
 - Pester coverage: `Tests/SwitchDiscovery.Tests.ps1` (Linux-safe corpus) and `-Tag SandboxLive` for live trial hosts
+- **Restore missing installer for Sandbox**: when a package folder is pulled/copied without the `.msi`/`.exe`, `Restore-AppGetterPackageInstaller` re-downloads from `app.json` `installerUrl` (used by Test in Sandbox / trial sessions). `Get-AppGetterLiveTestInstaller` caches a real 7-Zip MSI for SandboxLive tests
 
 ## Version 2.2.0 - 2026-08-20
 

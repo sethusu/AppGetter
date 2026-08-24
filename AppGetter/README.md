@@ -228,6 +228,7 @@ Install-AppGetterContentPrepTool   # installs intunewinapputil via winget if mis
 | `AppGetter.exe` won't start | Check `%TEMP%\AppGetter-launch.log`; use `Start-AppGetter.cmd` or `Launch-AppGetter.ps1` instead |
 | Packaging failed | Check `appgetter-packaging.log` in the version output folder and the GUI log panel |
 | Test in Sandbox unavailable | Needs Windows Pro/Enterprise/Education with Sandbox enabled; Home is not supported |
+| Sandbox says no installer file | Package folder needs the `.msi`/`.exe` beside `install.ps1`. AppGetter auto-restores it from `app.json` `installerUrl` when you click **Test in Sandbox**; otherwise re-run packaging or copy the installer back into the version folder |
 | Sandbox install showed a dialog | Install was not silent — see `sandbox-failure.log` and re-package with better switches |
 | Detection fails on devices | Run `detection.ps1` locally; review logs in `%ProgramData%\Microsoft\IntuneManagementExtension\Logs\` |
 | GUI won't start | Run from PowerShell 5.1+ on Windows; WPF requires a desktop session |

@@ -883,10 +883,13 @@ function Invoke-AppGetterSandboxTestFromUi {
         return
     }
 
-    $info = Get-AppGetterSandboxPackageInfo -VersionDirectory $dir
+    $info = Get-AppGetterSandboxPackageInfo -VersionDirectory $dir -RestoreInstaller
     if (-not $info.Ready) {
         [System.Windows.MessageBox]::Show($window, $info.Reason, 'AppGetter', 'OK', 'Warning') | Out-Null
         return
+    }
+    if ($info.InstallerRestore -and $info.InstallerRestore.Restored) {
+        Add-LogLine -LogControl $logText -Message $info.InstallerRestore.Message
     }
 
     $sandbox = Test-AppGetterWindowsSandbox

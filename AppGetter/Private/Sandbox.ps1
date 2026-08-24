@@ -473,10 +473,136 @@ function Test-AppGetterSandboxPackage {
     return $true
 }
 
-function Get-AppGetterSandboxPackageInfo {
+function Get-AppGetterPackageInstallerCandidates {
     param(
         [Parameter(Mandatory = $true)]
         [string]$VersionDirectory
+    )
+
+    if (-not (Test-Path -LiteralPath $VersionDirectory)) {
+        return @()
+    }
+
+    return @(Get-ChildItem -LiteralPath $VersionDirectory -File -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Extension -in '.exe', '.msi', '.msix', '.appx' -and
+                $_.Name -notlike '*intunewin*'
+            } |
+            Sort-Object LastWriteTime -Descending)
+}
+
+function Restore-AppGetterPackageInstaller {
+    <#
+    .SYNOPSIS
+        Downloads the installer into a package folder when scripts exist but the .msi/.exe is missing.
+    .DESCRIPTION
+        Package folders are often copied or pulled without large installer binaries. Sandbox testing and
+        silent-switch trials need the installer beside install.ps1. This restores it from app.json
+        installerUrl (http/https only) and optionally verifies the SHA-256 hash.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VersionDirectory,
+        [switch]$Force
+    )
+
+    $result = [ordered]@{
+        Restored       = $false
+        AlreadyPresent = $false
+        InstallerPath  = $null
+        SourceUrl      = $null
+        Message        = ''
+    }
+
+    if (-not (Test-Path -LiteralPath $VersionDirectory)) {
+        $result.Message = "Package folder was not found: $VersionDirectory"
+        return [PSCustomObject]$result
+    }
+
+    $existing = @(Get-AppGetterPackageInstallerCandidates -VersionDirectory $VersionDirectory)
+    if ($existing.Count -gt 0 -and -not $Force) {
+        $result.AlreadyPresent = $true
+        $result.InstallerPath = $existing[0].FullName
+        $result.Message = "Installer already present: $($existing[0].Name)"
+        return [PSCustomObject]$result
+    }
+
+    $appJsonPath = Join-Path $VersionDirectory 'app.json'
+    if (-not (Test-Path -LiteralPath $appJsonPath)) {
+        $result.Message = 'app.json was not found; cannot restore installer URL.'
+        return [PSCustomObject]$result
+    }
+
+    try {
+        $app = Get-Content -LiteralPath $appJsonPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    } catch {
+        $result.Message = "Could not read app.json: $($_.Exception.Message)"
+        return [PSCustomObject]$result
+    }
+
+    $sourceUrl = [string]$app.installerUrl
+    $fileName = [string]$app.installerFilename
+    $expectedHash = [string]$app.hash
+    if (-not $expectedHash -and $app.switchDiscovery -and $app.switchDiscovery.installerHash) {
+        $expectedHash = [string]$app.switchDiscovery.installerHash
+    }
+
+    if ([string]::IsNullOrWhiteSpace($sourceUrl)) {
+        $result.Message = 'app.json does not include installerUrl.'
+        return [PSCustomObject]$result
+    }
+
+    if ($sourceUrl -notmatch '^(?i)https?://') {
+        $result.Message = "installerUrl is not an http(s) download link ('$sourceUrl'); cannot restore automatically."
+        return [PSCustomObject]$result
+    }
+
+    if ([string]::IsNullOrWhiteSpace($fileName)) {
+        $fileName = Split-Path -Leaf ($sourceUrl -split '\?')[0]
+    }
+    if ([string]::IsNullOrWhiteSpace($fileName)) {
+        $result.Message = 'Could not determine installer file name from app.json.'
+        return [PSCustomObject]$result
+    }
+
+    $destination = Join-Path $VersionDirectory $fileName
+    $result.SourceUrl = $sourceUrl
+
+    try {
+        Write-AppGetterLog -Message "Restoring missing package installer from $sourceUrl" -Level Info
+        $null = Start-WebInstallerDownload -Url $sourceUrl -OutputPath $destination -FileName $fileName
+    } catch {
+        $result.Message = "Installer download failed: $($_.Exception.Message)"
+        return [PSCustomObject]$result
+    }
+
+    if (-not (Test-Path -LiteralPath $destination)) {
+        $result.Message = "Download completed but installer was not found at $destination"
+        return [PSCustomObject]$result
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($expectedHash)) {
+        $actualHash = (Get-FileHash -Path $destination -Algorithm SHA256).Hash
+        if (-not [string]::Equals($actualHash, $expectedHash, [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
+            $result.Message = "Restored installer hash mismatch. Expected $expectedHash, got $actualHash."
+            return [PSCustomObject]$result
+        }
+    }
+
+    $result.Restored = $true
+    $result.InstallerPath = $destination
+    $result.Message = "Restored installer to $destination"
+    Write-AppGetterLog -Message $result.Message -Level Success
+    return [PSCustomObject]$result
+}
+
+function Get-AppGetterSandboxPackageInfo {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VersionDirectory,
+        [switch]$RestoreInstaller
     )
 
     $dir = $VersionDirectory
@@ -499,15 +625,18 @@ function Get-AppGetterSandboxPackageInfo {
         }
     }
 
+    $restore = $null
+    if ($RestoreInstaller -and $dir) {
+        $restore = Restore-AppGetterPackageInstaller -VersionDirectory $dir
+    }
+
     $installer = $null
+    $candidates = @()
     if ($dir -and (Test-Path -LiteralPath $dir)) {
-        $installer = Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.Extension -in '.exe', '.msi', '.msix', '.appx' -and
-                $_.Name -notlike '*intunewin*'
-            } |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
+        $candidates = @(Get-AppGetterPackageInstallerCandidates -VersionDirectory $dir)
+        if ($candidates.Count -gt 0) {
+            $installer = $candidates[0]
+        }
     }
 
     $reason = $null
@@ -520,7 +649,11 @@ function Get-AppGetterSandboxPackageInfo {
     } elseif (-not (Test-Path -LiteralPath (Join-Path $dir 'uninstall.ps1'))) {
         $reason = 'uninstall.ps1 was not found. Create a package first.'
     } elseif (-not $installer) {
-        $reason = 'No installer file (.exe, .msi, .msix, or .appx) was found in the package folder.'
+        if ($restore -and $restore.Message) {
+            $reason = "No installer file (.exe, .msi, .msix, or .appx) was found in the package folder. $($restore.Message)"
+        } else {
+            $reason = 'No installer file (.exe, .msi, .msix, or .appx) was found in the package folder. Re-run packaging, or ensure app.json has an http(s) installerUrl so AppGetter can restore it.'
+        }
     }
 
     return [PSCustomObject]@{
@@ -534,6 +667,7 @@ function Get-AppGetterSandboxPackageInfo {
         InstallScript     = Join-Path $dir 'install.ps1'
         DetectionScript   = Join-Path $dir 'detection.ps1'
         UninstallScript   = Join-Path $dir 'uninstall.ps1'
+        InstallerRestore  = $restore
     }
 }
 
@@ -1114,9 +1248,13 @@ function Start-AppGetterSandboxSession {
         [int]$MemoryInMB = 4096
     )
 
-    $package = Get-AppGetterSandboxPackageInfo -VersionDirectory $VersionDirectory
+    $package = Get-AppGetterSandboxPackageInfo -VersionDirectory $VersionDirectory -RestoreInstaller
     if (-not $package.Ready) {
         throw $package.Reason
+    }
+
+    if ($package.InstallerRestore -and $package.InstallerRestore.Restored) {
+        Write-AppGetterLog -Message $package.InstallerRestore.Message -Level Success
     }
 
     $sessionId = [Guid]::NewGuid().ToString('N')
@@ -2991,5 +3129,58 @@ function Test-InstallerCommandInSandbox {
         if ($session -and -not $SkipLaunch) {
             Stop-AppGetterSandboxTrialSession -Session $session -Cleanup
         }
+    }
+}
+
+function Get-AppGetterLiveTestInstaller {
+    <#
+    .SYNOPSIS
+        Returns a real downloadable installer for SandboxLive research tests (cached under the user temp folder).
+    #>
+    [CmdletBinding()]
+    param(
+        [ValidateSet('msi', 'exe')]
+        [string]$Kind = 'msi',
+        [string]$CacheDirectory
+    )
+
+    if (-not $CacheDirectory) {
+        $CacheDirectory = Join-Path ([System.IO.Path]::GetTempPath()) 'AppGetterLiveInstallers'
+    }
+    if (-not (Test-Path -LiteralPath $CacheDirectory)) {
+        New-Item -ItemType Directory -Path $CacheDirectory -Force | Out-Null
+    }
+
+    $catalog = @{
+        msi = @{
+            FileName = '7z2409-x64.msi'
+            Url = 'https://www.7-zip.org/a/7z2409-x64.msi'
+            AppName = '7-Zip'
+        }
+        exe = @{
+            FileName = '7z2409-x64.exe'
+            Url = 'https://www.7-zip.org/a/7z2409-x64.exe'
+            AppName = '7-Zip'
+        }
+    }
+
+    $entry = $catalog[$Kind]
+    $path = Join-Path $CacheDirectory $entry.FileName
+    if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).Length -lt 1024) {
+        Write-AppGetterLog -Message "Downloading live Sandbox test installer: $($entry.Url)" -Level Info
+        $null = Start-WebInstallerDownload -Url $entry.Url -OutputPath $path -FileName $entry.FileName
+    }
+
+    if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).Length -lt 1024) {
+        throw "Failed to download live test installer for kind '$Kind'."
+    }
+
+    return [PSCustomObject]@{
+        Path = $path
+        FileName = $entry.FileName
+        Url = $entry.Url
+        AppName = $entry.AppName
+        Kind = $Kind
+        Length = (Get-Item -LiteralPath $path).Length
     }
 }

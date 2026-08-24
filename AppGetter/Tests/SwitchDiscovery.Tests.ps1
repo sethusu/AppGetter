@@ -207,21 +207,35 @@ Describe 'SandboxLive silent-switch research trials' -Tag 'SandboxLive' {
     BeforeAll {
         $script:sandbox = Test-AppGetterWindowsSandbox
         $script:canLive = [bool]($script:sandbox.Enabled)
+        $script:liveMsi = $null
         if (-not $script:canLive) {
             Write-Host "Skipping SandboxLive tests: $($script:sandbox.Reason)" -ForegroundColor Yellow
+        } else {
+            try {
+                $script:liveMsi = Get-AppGetterLiveTestInstaller -Kind msi
+            } catch {
+                Write-Host "Skipping SandboxLive installer download: $_" -ForegroundColor Yellow
+                $script:canLive = $false
+            }
         }
     }
 
-    It 'Rejects a clearly non-silent Inno command when Sandbox is available' -Skip:(-not $script:canLive) {
-        # Uses a synthetic fixture that cannot actually install; expect failure / non-verified,
-        # proving the research harness returns structured evidence rather than a false success.
-        $installer = Join-Path $script:fixtureRoot 'inno-setup.exe'
+    It 'Downloads a real MSI for Sandbox research when Sandbox is available' -Skip:(-not $script:canLive) {
+        $script:liveMsi | Should -Not -BeNullOrEmpty
+        Test-Path -LiteralPath $script:liveMsi.Path | Should -Be $true
+        $script:liveMsi.Length | Should -BeGreaterThan 100000
+        $script:liveMsi.FileName | Should -Match '\.msi$'
+    }
+
+    It 'Rejects a clearly non-silent command against a real MSI when Sandbox is available' -Skip:(-not $script:canLive) {
+        # Empty/invalid msiexec args should not verify as a silent success.
         $result = Test-InstallerCommandInSandbox `
-            -InstallerPath $installer `
-            -Command '"inno-setup.exe"' `
-            -AppName 'FakeInno' `
-            -TimeoutSeconds 180
+            -InstallerPath $script:liveMsi.Path `
+            -Command ("msiexec /i `"{0}`"" -f $script:liveMsi.FileName) `
+            -AppName $script:liveMsi.AppName `
+            -TimeoutSeconds 300
         $result.Method | Should -Be 'WindowsSandbox'
+        # Without /qn this typically shows UI or fails verification criteria.
         $result.Verified | Should -Be $false
         $result.Message | Should -Not -BeNullOrEmpty
     }

@@ -36,6 +36,8 @@ Export-ModuleMember -Function @(
     'Resolve-AppGetterPackageVersionDirectory'
     'Test-AppGetterSandboxPackage'
     'Get-AppGetterSandboxPackageInfo'
+    'Restore-AppGetterPackageInstaller'
+    'Get-AppGetterLiveTestInstaller'
     'Start-AppGetterSandboxSession'
     'Set-AppGetterSandboxCommand'
     'Get-AppGetterSandboxStatus'

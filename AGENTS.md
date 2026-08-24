@@ -41,6 +41,12 @@ Non-obvious caveats when running on Linux:
   `AppGetter/Run-Tests.ps1` so Linux CI stays green. On a Windows Pro/Enterprise host with Sandbox
   enabled, run them with:
   `pwsh -NoProfile -File AppGetter/Run-Tests.ps1 -Tag SandboxLive -ExcludeTag @()`
+  Those tests download a real 7-Zip MSI via `Get-AppGetterLiveTestInstaller` (cached under the temp
+  folder). Synthetic fixtures under `Tests/Fixtures/Installers/` are fingerprint-only stubs and are
+  not suitable for live Sandbox installs.
+- If a package folder has scripts/`app.json` but the `.msi`/`.exe` was not copied (common when a
+  package is pulled/shared without binaries), **Test in Sandbox** and `Start-AppGetterSandboxSession`
+  call `Restore-AppGetterPackageInstaller` to re-download from `app.json` `installerUrl`.
 
 Automated tests (optional): `pwsh -NoProfile -File AppGetter/Run-Tests.ps1`
 Static silent-switch corpus: `AppGetter/Tests/SwitchDiscovery.Tests.ps1` (Linux-safe).
