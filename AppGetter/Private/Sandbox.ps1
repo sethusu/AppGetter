@@ -473,10 +473,136 @@ function Test-AppGetterSandboxPackage {
     return $true
 }
 
-function Get-AppGetterSandboxPackageInfo {
+function Get-AppGetterPackageInstallerCandidates {
     param(
         [Parameter(Mandatory = $true)]
         [string]$VersionDirectory
+    )
+
+    if (-not (Test-Path -LiteralPath $VersionDirectory)) {
+        return @()
+    }
+
+    return @(Get-ChildItem -LiteralPath $VersionDirectory -File -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Extension -in '.exe', '.msi', '.msix', '.appx' -and
+                $_.Name -notlike '*intunewin*'
+            } |
+            Sort-Object LastWriteTime -Descending)
+}
+
+function Restore-AppGetterPackageInstaller {
+    <#
+    .SYNOPSIS
+        Downloads the installer into a package folder when scripts exist but the .msi/.exe is missing.
+    .DESCRIPTION
+        Package folders are often copied or pulled without large installer binaries. Sandbox testing and
+        silent-switch trials need the installer beside install.ps1. This restores it from app.json
+        installerUrl (http/https only) and optionally verifies the SHA-256 hash.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VersionDirectory,
+        [switch]$Force
+    )
+
+    $result = [ordered]@{
+        Restored       = $false
+        AlreadyPresent = $false
+        InstallerPath  = $null
+        SourceUrl      = $null
+        Message        = ''
+    }
+
+    if (-not (Test-Path -LiteralPath $VersionDirectory)) {
+        $result.Message = "Package folder was not found: $VersionDirectory"
+        return [PSCustomObject]$result
+    }
+
+    $existing = @(Get-AppGetterPackageInstallerCandidates -VersionDirectory $VersionDirectory)
+    if ($existing.Count -gt 0 -and -not $Force) {
+        $result.AlreadyPresent = $true
+        $result.InstallerPath = $existing[0].FullName
+        $result.Message = "Installer already present: $($existing[0].Name)"
+        return [PSCustomObject]$result
+    }
+
+    $appJsonPath = Join-Path $VersionDirectory 'app.json'
+    if (-not (Test-Path -LiteralPath $appJsonPath)) {
+        $result.Message = 'app.json was not found; cannot restore installer URL.'
+        return [PSCustomObject]$result
+    }
+
+    try {
+        $app = Get-Content -LiteralPath $appJsonPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    } catch {
+        $result.Message = "Could not read app.json: $($_.Exception.Message)"
+        return [PSCustomObject]$result
+    }
+
+    $sourceUrl = [string]$app.installerUrl
+    $fileName = [string]$app.installerFilename
+    $expectedHash = [string]$app.hash
+    if (-not $expectedHash -and $app.switchDiscovery -and $app.switchDiscovery.installerHash) {
+        $expectedHash = [string]$app.switchDiscovery.installerHash
+    }
+
+    if ([string]::IsNullOrWhiteSpace($sourceUrl)) {
+        $result.Message = 'app.json does not include installerUrl.'
+        return [PSCustomObject]$result
+    }
+
+    if ($sourceUrl -notmatch '^(?i)https?://') {
+        $result.Message = "installerUrl is not an http(s) download link ('$sourceUrl'); cannot restore automatically."
+        return [PSCustomObject]$result
+    }
+
+    if ([string]::IsNullOrWhiteSpace($fileName)) {
+        $fileName = Split-Path -Leaf ($sourceUrl -split '\?')[0]
+    }
+    if ([string]::IsNullOrWhiteSpace($fileName)) {
+        $result.Message = 'Could not determine installer file name from app.json.'
+        return [PSCustomObject]$result
+    }
+
+    $destination = Join-Path $VersionDirectory $fileName
+    $result.SourceUrl = $sourceUrl
+
+    try {
+        Write-AppGetterLog -Message "Restoring missing package installer from $sourceUrl" -Level Info
+        $null = Start-WebInstallerDownload -Url $sourceUrl -OutputPath $destination -FileName $fileName
+    } catch {
+        $result.Message = "Installer download failed: $($_.Exception.Message)"
+        return [PSCustomObject]$result
+    }
+
+    if (-not (Test-Path -LiteralPath $destination)) {
+        $result.Message = "Download completed but installer was not found at $destination"
+        return [PSCustomObject]$result
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($expectedHash)) {
+        $actualHash = (Get-FileHash -Path $destination -Algorithm SHA256).Hash
+        if (-not [string]::Equals($actualHash, $expectedHash, [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
+            $result.Message = "Restored installer hash mismatch. Expected $expectedHash, got $actualHash."
+            return [PSCustomObject]$result
+        }
+    }
+
+    $result.Restored = $true
+    $result.InstallerPath = $destination
+    $result.Message = "Restored installer to $destination"
+    Write-AppGetterLog -Message $result.Message -Level Success
+    return [PSCustomObject]$result
+}
+
+function Get-AppGetterSandboxPackageInfo {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VersionDirectory,
+        [switch]$RestoreInstaller
     )
 
     $dir = $VersionDirectory
@@ -499,15 +625,18 @@ function Get-AppGetterSandboxPackageInfo {
         }
     }
 
+    $restore = $null
+    if ($RestoreInstaller -and $dir) {
+        $restore = Restore-AppGetterPackageInstaller -VersionDirectory $dir
+    }
+
     $installer = $null
+    $candidates = @()
     if ($dir -and (Test-Path -LiteralPath $dir)) {
-        $installer = Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.Extension -in '.exe', '.msi', '.msix', '.appx' -and
-                $_.Name -notlike '*intunewin*'
-            } |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
+        $candidates = @(Get-AppGetterPackageInstallerCandidates -VersionDirectory $dir)
+        if ($candidates.Count -gt 0) {
+            $installer = $candidates[0]
+        }
     }
 
     $reason = $null
@@ -520,7 +649,11 @@ function Get-AppGetterSandboxPackageInfo {
     } elseif (-not (Test-Path -LiteralPath (Join-Path $dir 'uninstall.ps1'))) {
         $reason = 'uninstall.ps1 was not found. Create a package first.'
     } elseif (-not $installer) {
-        $reason = 'No installer file (.exe, .msi, .msix, or .appx) was found in the package folder.'
+        if ($restore -and $restore.Message) {
+            $reason = "No installer file (.exe, .msi, .msix, or .appx) was found in the package folder. $($restore.Message)"
+        } else {
+            $reason = 'No installer file (.exe, .msi, .msix, or .appx) was found in the package folder. Re-run packaging, or ensure app.json has an http(s) installerUrl so AppGetter can restore it.'
+        }
     }
 
     return [PSCustomObject]@{
@@ -534,6 +667,7 @@ function Get-AppGetterSandboxPackageInfo {
         InstallScript     = Join-Path $dir 'install.ps1'
         DetectionScript   = Join-Path $dir 'detection.ps1'
         UninstallScript   = Join-Path $dir 'uninstall.ps1'
+        InstallerRestore  = $restore
     }
 }
 
@@ -1114,9 +1248,13 @@ function Start-AppGetterSandboxSession {
         [int]$MemoryInMB = 4096
     )
 
-    $package = Get-AppGetterSandboxPackageInfo -VersionDirectory $VersionDirectory
+    $package = Get-AppGetterSandboxPackageInfo -VersionDirectory $VersionDirectory -RestoreInstaller
     if (-not $package.Ready) {
         throw $package.Reason
+    }
+
+    if ($package.InstallerRestore -and $package.InstallerRestore.Restored) {
+        Write-AppGetterLog -Message $package.InstallerRestore.Message -Level Success
     }
 
     $sessionId = [Guid]::NewGuid().ToString('N')
@@ -2280,5 +2418,769 @@ function Get-AppGetterPackageValidation {
             Path         = $path
             Exists       = $true
         }
+    }
+}
+
+function Test-AppGetterAcceptedInstallExitCode {
+    param([object]$ExitCode)
+
+    if ($null -eq $ExitCode) {
+        return $false
+    }
+
+    try {
+        $code = [int]$ExitCode
+    } catch {
+        return $false
+    }
+
+    return ($code -eq 0 -or $code -eq 3010 -or $code -eq 1641)
+}
+
+function New-AppGetterSandboxTrialGuestScript {
+    <#
+    .SYNOPSIS
+        Guest coordinator for silent-switch discovery trials (single install command + evidence).
+    #>
+    return @'
+$ErrorActionPreference = 'Continue'
+$handshakeRoot = 'C:\AppGetterSandbox'
+$mappedPackageRoot = 'C:\AppGetterPackage'
+$packageRoot = 'C:\AppGetterTrial'
+$ProgressPreference = 'SilentlyContinue'
+
+function Write-GuestLog {
+    param([string]$Message)
+    $line = '{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
+    Write-Host $line
+    try {
+        Add-Content -LiteralPath (Join-Path $handshakeRoot 'guest.log') -Value $line -Encoding UTF8 -ErrorAction Stop
+    } catch { }
+}
+
+function Write-GuestJson {
+    param([string]$Path, $Object)
+    $directory = Split-Path -Path $Path -Parent
+    if ($directory -and -not (Test-Path -LiteralPath $directory)) {
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    }
+    $json = $Object | ConvertTo-Json -Depth 8
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $tmp = "$Path.tmp"
+    [System.IO.File]::WriteAllBytes($tmp, $bytes)
+    Move-Item -LiteralPath $tmp -Destination $Path -Force
+}
+
+function Write-Heartbeat {
+    Write-GuestJson -Path (Join-Path $handshakeRoot 'heartbeat.json') -Object @{
+        alive = $true
+        updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+        computerName = $env:COMPUTERNAME
+    }
+}
+
+function Write-Status {
+    param(
+        [string]$Step,
+        [string]$State,
+        [object]$ExitCode = $null,
+        [string]$Message = '',
+        [bool]$SilentUiDetected = $false,
+        [object[]]$SilentUiWindows = @()
+    )
+
+    $payload = [ordered]@{
+        step = $Step
+        state = $State
+        exitCode = $ExitCode
+        message = $Message
+        updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+        computerName = $env:COMPUTERNAME
+        silentUiDetected = [bool]$SilentUiDetected
+        silentUiWindows = @($SilentUiWindows)
+    }
+    Write-GuestJson -Path (Join-Path $handshakeRoot 'status.json') -Object $payload
+    try {
+        Add-Content -LiteralPath (Join-Path $handshakeRoot 'status.ndjson') -Value (($payload | ConvertTo-Json -Compress -Depth 6)) -Encoding UTF8
+    } catch { }
+}
+
+$uiIgnoreProcessNames = @(
+    'powershell', 'powershell_ise', 'pwsh', 'cmd', 'conhost', 'explorer',
+    'WindowsSandbox', 'WindowsSandboxClient', 'msedge', 'SearchHost', 'SearchUI',
+    'StartMenuExperienceHost', 'ShellExperienceHost', 'TextInputHost',
+    'ApplicationFrameHost', 'SystemSettings', 'dwm', 'sihost', 'ctfmon',
+    'RuntimeBroker', 'LockApp', 'WWAHost'
+)
+
+function Test-IgnoredUiProcess {
+    param([string]$ProcessName)
+    foreach ($name in $uiIgnoreProcessNames) {
+        if ([string]::Equals($name, $ProcessName, [StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-IgnoredInstallerSplash {
+    param([string]$ProcessName, [string]$Title)
+    $t = ([string]$Title).Trim()
+    if ($t -eq '(visible window, no title)') { $t = '' }
+    if ($ProcessName -match '\.tmp$') {
+        if ([string]::IsNullOrWhiteSpace($t) -or $t -eq 'Setup' -or $t -eq 'Installing') {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Get-InteractiveWindowSnapshot {
+    $snapshot = @{}
+    Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_.MainWindowHandle -ne 0 -and $_.MainWindowHandle -ne [IntPtr]::Zero) {
+            $snapshot[$_.Id] = $true
+        }
+    }
+    return $snapshot
+}
+
+function Save-DesktopScreenshot {
+    param([string]$Path)
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+        $graphics = [System.Drawing.Graphics]::FromImage($bmp)
+        $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+        $directory = Split-Path -Path $Path -Parent
+        if ($directory -and -not (Test-Path -LiteralPath $directory)) {
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        }
+        $bmp.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+        $graphics.Dispose()
+        $bmp.Dispose()
+        return $true
+    } catch {
+        Write-GuestLog "Could not capture screenshot: $_"
+        return $false
+    }
+}
+
+function Stop-ProcessTree {
+    param([int]$Id)
+    if ($Id -le 0) { return }
+    try { & taskkill.exe /PID $Id /T /F | Out-Null } catch { }
+}
+
+function Get-UninstallRegistrySnapshot {
+    $entries = @{}
+    $roots = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    foreach ($root in $roots) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+                $props = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction Stop
+                $displayName = [string]$props.DisplayName
+                if ([string]::IsNullOrWhiteSpace($displayName)) { return }
+                $key = ($_.PSPath + '|' + $displayName).ToLowerInvariant()
+                $entries[$key] = [PSCustomObject]@{
+                    DisplayName = $displayName
+                    DisplayVersion = [string]$props.DisplayVersion
+                    Publisher = [string]$props.Publisher
+                    UninstallString = [string]$props.UninstallString
+                    Path = $_.PSPath
+                }
+            } catch { }
+        }
+    }
+    return $entries
+}
+
+function Read-TrialRequest {
+    foreach ($candidate in @(
+            (Join-Path $packageRoot 'trial-request.json'),
+            (Join-Path $mappedPackageRoot 'trial-request.json'),
+            (Join-Path $handshakeRoot 'trial-request.json')
+        )) {
+        if (Test-Path -LiteralPath $candidate) {
+            try {
+                return (Get-Content -LiteralPath $candidate -Raw -ErrorAction Stop | ConvertFrom-Json)
+            } catch { }
+        }
+    }
+    return $null
+}
+
+if (-not (Test-Path -LiteralPath $handshakeRoot)) {
+    New-Item -ItemType Directory -Path $handshakeRoot -Force | Out-Null
+}
+if (-not (Test-Path -LiteralPath $packageRoot)) {
+    New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+}
+
+$deadline = (Get-Date).AddMinutes(2)
+while (-not (Test-Path -LiteralPath (Join-Path $mappedPackageRoot 'trial-request.json'))) {
+    if ((Get-Date) -gt $deadline) {
+        Write-GuestLog "Mapped trial package not available: $mappedPackageRoot"
+        Write-GuestJson -Path (Join-Path $handshakeRoot 'trial-result.json') -Object @{
+            verified = $false
+            exitCode = 1
+            silentUiDetected = $false
+            message = 'Mapped trial package was not available inside Windows Sandbox.'
+            installEvidence = @()
+        }
+        return
+    }
+    Start-Sleep -Seconds 1
+}
+
+Copy-Item -Path (Join-Path $mappedPackageRoot '*') -Destination $packageRoot -Recurse -Force
+Write-GuestLog "Copied trial files to $packageRoot"
+Write-Heartbeat
+Write-Status -Step 'trial' -State 'running' -Message 'Starting silent-switch discovery trial.'
+
+$request = Read-TrialRequest
+if (-not $request -or [string]::IsNullOrWhiteSpace([string]$request.command)) {
+    Write-GuestJson -Path (Join-Path $handshakeRoot 'trial-result.json') -Object @{
+        verified = $false
+        exitCode = 1
+        silentUiDetected = $false
+        message = 'trial-request.json was missing or did not include a command.'
+        installEvidence = @()
+    }
+    Write-Status -Step 'trial' -State 'failed' -ExitCode 1 -Message 'Missing trial command.'
+    return
+}
+
+$command = [string]$request.command
+$appName = [string]$request.appName
+$stepLogDir = Join-Path $handshakeRoot 'logs\trial'
+New-Item -ItemType Directory -Path $stepLogDir -Force | Out-Null
+
+$before = Get-UninstallRegistrySnapshot
+$windowBaseline = Get-InteractiveWindowSnapshot
+$uiEvents = New-Object System.Collections.Generic.List[object]
+$killedForUi = $false
+$timedOut = $false
+$uiDetectedAt = $null
+$ignoredSplashIds = @{}
+$localStepDir = Join-Path $env:TEMP 'AppGetterTrial'
+if (Test-Path -LiteralPath $localStepDir) {
+    Remove-Item -LiteralPath $localStepDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+New-Item -ItemType Directory -Path $localStepDir -Force | Out-Null
+$stdoutPath = Join-Path $localStepDir 'console-stdout.txt'
+$stderrPath = Join-Path $localStepDir 'console-stderr.txt'
+
+Set-Location -Path $packageRoot
+Write-GuestLog "Executing trial command: $command"
+$process = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $command) -PassThru -NoNewWindow `
+    -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+$deadline = (Get-Date).AddMinutes(12)
+
+while ($process) {
+    try { $process.Refresh() } catch { }
+    if ($process.HasExited) { break }
+    Write-Heartbeat
+    if ((Get-Date) -gt $deadline) {
+        $timedOut = $true
+        Write-GuestLog 'Timed out waiting for trial command after 12 minutes.'
+        Stop-ProcessTree -Id $process.Id
+        break
+    }
+
+    Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_.MainWindowHandle -eq 0 -or $_.MainWindowHandle -eq [IntPtr]::Zero) { return }
+        if ($windowBaseline.ContainsKey($_.Id)) { return }
+        if (Test-IgnoredUiProcess -ProcessName $_.ProcessName) { return }
+        $title = [string]$_.MainWindowTitle
+        if ([string]::IsNullOrWhiteSpace($title)) { $title = '(visible window, no title)' }
+        if (Test-IgnoredInstallerSplash -ProcessName $_.ProcessName -Title $title) {
+            if (-not $ignoredSplashIds.ContainsKey($_.Id)) {
+                $ignoredSplashIds[$_.Id] = $true
+                Write-GuestLog ("Ignoring Inno extractor window '{0}' ({1})." -f $title, $_.ProcessName)
+            }
+            return
+        }
+        foreach ($existing in $uiEvents) {
+            if ($existing.processId -eq $_.Id) { return }
+        }
+        $uiEvents.Add(@{
+            processName = $_.ProcessName
+            windowTitle = $title
+            processId = $_.Id
+            detectedAt = (Get-Date).ToUniversalTime().ToString('o')
+        }) | Out-Null
+        if (-not $uiDetectedAt) {
+            $uiDetectedAt = Get-Date
+            $shotPath = Join-Path $stepLogDir 'ui-detected.png'
+            if (Save-DesktopScreenshot -Path $shotPath) {
+                Write-GuestLog "Saved UI screenshot to $shotPath"
+            }
+        }
+        Write-GuestLog ("WARNING: interactive window during trial: '{0}' ({1})." -f $title, $_.ProcessName)
+        Write-Status -Step 'trial' -State 'running' -Message ("NOT SILENT: '{0}' ({1})" -f $title, $_.ProcessName) `
+            -SilentUiDetected $true -SilentUiWindows @($uiEvents)
+    }
+
+    if ($uiDetectedAt -and -not $killedForUi) {
+        if (((Get-Date) - $uiDetectedAt).TotalSeconds -ge 12) {
+            $killedForUi = $true
+            Write-GuestLog 'Stopping trial because an interactive window blocked a silent install.'
+            Stop-ProcessTree -Id $process.Id
+            break
+        }
+    }
+    Start-Sleep -Seconds 1
+}
+
+if ($process -and -not $process.HasExited) {
+    try { $process.WaitForExit(20000) | Out-Null } catch { }
+    try { $process.Refresh() } catch { }
+}
+if ($process -and -not $process.HasExited) {
+    Stop-ProcessTree -Id $process.Id
+}
+
+$exitCode = 1603
+if ($killedForUi -or $timedOut) {
+    $exitCode = 1603
+} elseif ($process -and $null -ne $process.ExitCode) {
+    $exitCode = [int]$process.ExitCode
+}
+
+foreach ($sourcePath in @($stdoutPath, $stderrPath)) {
+    if ($sourcePath -and (Test-Path -LiteralPath $sourcePath)) {
+        Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $stepLogDir ([System.IO.Path]::GetFileName($sourcePath))) -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Start-Sleep -Seconds 2
+$after = Get-UninstallRegistrySnapshot
+$installEvidence = New-Object System.Collections.Generic.List[object]
+foreach ($key in $after.Keys) {
+    if ($before.ContainsKey($key)) { continue }
+    $entry = $after[$key]
+    $nameMatch = $true
+    if (-not [string]::IsNullOrWhiteSpace($appName)) {
+        $nameMatch = $entry.DisplayName -like ("*{0}*" -f $appName) -or $appName -like ("*{0}*" -f $entry.DisplayName)
+    }
+    if ($nameMatch -or [string]::IsNullOrWhiteSpace($appName)) {
+        $installEvidence.Add($entry) | Out-Null
+    }
+}
+
+# If AppName filter excluded everything, keep all new ARP entries as weak evidence.
+if ($installEvidence.Count -eq 0) {
+    foreach ($key in $after.Keys) {
+        if (-not $before.ContainsKey($key)) {
+            $installEvidence.Add($after[$key]) | Out-Null
+        }
+    }
+}
+
+$silentUi = ($uiEvents.Count -gt 0)
+$acceptedExit = ($exitCode -eq 0 -or $exitCode -eq 3010 -or $exitCode -eq 1641)
+$verified = (-not $silentUi) -and $acceptedExit -and ($installEvidence.Count -gt 0)
+
+$message = "Trial finished with exit code $exitCode."
+if ($silentUi) {
+    $titles = @($uiEvents | ForEach-Object { $_.windowTitle }) -join '; '
+    $message = "Trial was not silent. Interactive window(s): $titles. Exit code $exitCode."
+} elseif (-not $acceptedExit) {
+    $message = "Trial command failed with exit code $exitCode."
+} elseif ($installEvidence.Count -eq 0) {
+    $message = "Trial exit code $exitCode was accepted, but no new uninstall registry evidence was found."
+} else {
+    $message = "Trial verified silent install. Exit code $exitCode. New ARP entries: $($installEvidence.Count)."
+}
+
+$result = [ordered]@{
+    verified = [bool]$verified
+    exitCode = [int]$exitCode
+    silentUiDetected = [bool]$silentUi
+    silentUiWindows = @($uiEvents)
+    message = $message
+    command = $command
+    appName = $appName
+    installEvidence = @($installEvidence)
+    timedOut = [bool]$timedOut
+    killedForUi = [bool]$killedForUi
+    finishedAt = (Get-Date).ToUniversalTime().ToString('o')
+}
+Write-GuestJson -Path (Join-Path $handshakeRoot 'trial-result.json') -Object $result
+Write-GuestJson -Path (Join-Path $stepLogDir 'trial-result.json') -Object $result
+Write-GuestLog $message
+Write-Status -Step 'trial' -State $(if ($verified) { 'completed' } else { 'failed' }) `
+    -ExitCode $exitCode -Message $message -SilentUiDetected $silentUi -SilentUiWindows @($uiEvents)
+
+Start-Sleep -Seconds 2
+try { Stop-Computer -Force } catch { }
+'@
+}
+
+function New-AppGetterSandboxTrialPackage {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerPath,
+        [Parameter(Mandatory = $true)]
+        [string]$Command,
+        [string]$AppName = '',
+        [string]$DestinationPath
+    )
+
+    if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
+        throw "Installer file not found: $InstallerPath"
+    }
+
+    if (-not $DestinationPath) {
+        $DestinationPath = Join-Path ([System.IO.Path]::GetTempPath()) ("AppGetterTrialPkg-{0}" -f ([Guid]::NewGuid().ToString('N')))
+    }
+
+    if (-not (Test-Path -LiteralPath $DestinationPath)) {
+        New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
+    }
+
+    $installerName = [System.IO.Path]::GetFileName($InstallerPath)
+    $destInstaller = Join-Path $DestinationPath $installerName
+    if ((Resolve-Path -LiteralPath $InstallerPath).Path -ne (Join-Path $DestinationPath $installerName)) {
+        Copy-Item -LiteralPath $InstallerPath -Destination $destInstaller -Force
+    }
+
+    $request = [ordered]@{
+        command = $Command
+        appName = $AppName
+        installerFileName = $installerName
+        createdAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    Write-AppGetterSandboxJson -Path (Join-Path $DestinationPath 'trial-request.json') -Object $request
+
+    return [PSCustomObject]@{
+        PackageDirectory = $DestinationPath
+        InstallerPath = $destInstaller
+        RequestPath = (Join-Path $DestinationPath 'trial-request.json')
+        Command = $Command
+        AppName = $AppName
+    }
+}
+
+function Start-AppGetterSandboxTrialSession {
+    <#
+    .SYNOPSIS
+        Starts a Windows Sandbox session that runs one silent-switch discovery trial.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerPath,
+        [Parameter(Mandatory = $true)]
+        [string]$Command,
+        [string]$AppName = '',
+        [switch]$SkipLaunch,
+        [int]$MemoryInMB = 4096
+    )
+
+    $sessionId = [Guid]::NewGuid().ToString('N')
+    $handshake = Join-Path ([System.IO.Path]::GetTempPath()) "AppGetterTrialSandbox-$sessionId"
+    New-Item -ItemType Directory -Path $handshake -Force | Out-Null
+
+    $package = New-AppGetterSandboxTrialPackage -InstallerPath $InstallerPath -Command $Command -AppName $AppName
+
+    $guestScriptPath = Join-Path $handshake 'Start-AppGetterSandboxTrialGuest.ps1'
+    Set-Content -LiteralPath $guestScriptPath -Value (New-AppGetterSandboxTrialGuestScript) -Encoding UTF8
+
+    Write-AppGetterSandboxJson -Path (Join-Path $handshake 'trial-request.json') -Object @{
+        command = $Command
+        appName = $AppName
+        installerFileName = [System.IO.Path]::GetFileName($InstallerPath)
+        createdAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+
+    Write-AppGetterSandboxJson -Path (Join-Path $handshake 'status.json') -Object @{
+        step = 'trial'
+        state = 'waiting'
+        exitCode = $null
+        message = 'Waiting for Windows Sandbox trial to start.'
+        updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+
+    $wsbPath = Join-Path $handshake 'AppGetterTrialSandbox.wsb'
+    $wsb = New-AppGetterSandboxWsbContent `
+        -HostPackagePath $package.PackageDirectory `
+        -HostHandshakePath $handshake `
+        -MemoryInMB $MemoryInMB `
+        -GuestScriptFileName 'Start-AppGetterSandboxTrialGuest.ps1'
+    Set-Content -LiteralPath $wsbPath -Value $wsb -Encoding UTF8
+
+    $launched = $false
+    $processId = $null
+    if (-not $SkipLaunch) {
+        $sandbox = Test-AppGetterWindowsSandbox
+        if (-not $sandbox.Enabled) {
+            throw $sandbox.Reason
+        }
+
+        $process = Start-Process -FilePath $sandbox.ExecutablePath -ArgumentList @("`"$wsbPath`"") -PassThru
+        $launched = $true
+        if ($process) {
+            $processId = $process.Id
+        }
+    }
+
+    return [PSCustomObject]@{
+        SessionId = $sessionId
+        HandshakeDirectory = $handshake
+        PackageDirectory = $package.PackageDirectory
+        WsbPath = $wsbPath
+        GuestScriptPath = $guestScriptPath
+        ResultPath = (Join-Path $handshake 'trial-result.json')
+        StatusPath = (Join-Path $handshake 'status.json')
+        HeartbeatPath = (Join-Path $handshake 'heartbeat.json')
+        GuestLogPath = (Join-Path $handshake 'guest.log')
+        Command = $Command
+        AppName = $AppName
+        InstallerPath = $InstallerPath
+        Launched = $launched
+        ProcessId = $processId
+        StartedAt = Get-Date
+    }
+}
+
+function Get-AppGetterSandboxTrialResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HandshakeDirectory
+    )
+
+    $path = Join-Path $HandshakeDirectory 'trial-result.json'
+    $obj = Read-AppGetterSandboxJson -Path $path
+    if (-not $obj) {
+        return $null
+    }
+
+    return [PSCustomObject]@{
+        Verified = [bool]$obj.verified
+        ExitCode = $obj.exitCode
+        SilentUiDetected = [bool]$obj.silentUiDetected
+        SilentUiWindows = @($obj.silentUiWindows)
+        Message = [string]$obj.message
+        Command = [string]$obj.command
+        AppName = [string]$obj.appName
+        InstallEvidence = @($obj.installEvidence)
+        TimedOut = [bool]$obj.timedOut
+        KilledForUi = [bool]$obj.killedForUi
+        FinishedAt = $obj.finishedAt
+        Path = $path
+        Raw = $obj
+    }
+}
+
+function Wait-AppGetterSandboxTrialResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HandshakeDirectory,
+        [int]$TimeoutSeconds = 900,
+        [int]$PollMilliseconds = 1000
+    )
+
+    $deadline = (Get-Date).AddSeconds([Math]::Max(30, $TimeoutSeconds))
+    while ((Get-Date) -lt $deadline) {
+        $result = Get-AppGetterSandboxTrialResult -HandshakeDirectory $HandshakeDirectory
+        if ($result) {
+            return $result
+        }
+        Start-Sleep -Milliseconds $PollMilliseconds
+    }
+
+    return $null
+}
+
+function Stop-AppGetterSandboxTrialSession {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Session,
+        [switch]$Cleanup
+    )
+
+    if ($Session.HandshakeDirectory -and (Test-Path -LiteralPath $Session.HandshakeDirectory)) {
+        # Trial guest self-shuts down; best-effort cleanup only.
+        if ($Cleanup) {
+            Start-Sleep -Milliseconds 500
+            Remove-Item -LiteralPath $Session.HandshakeDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    if ($Cleanup -and $Session.PackageDirectory -and (Test-Path -LiteralPath $Session.PackageDirectory)) {
+        Remove-Item -LiteralPath $Session.PackageDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function ConvertTo-AppGetterInstallerVerification {
+    param(
+        $TrialResult,
+        [string]$FallbackMessage = 'Sandbox trial did not produce a result.'
+    )
+
+    if (-not $TrialResult) {
+        return [PSCustomObject]@{
+            Verified = $false
+            ExitCode = $null
+            Message = $FallbackMessage
+            Observable = $null
+            SilentUiDetected = $false
+            InstallEvidence = @()
+            Method = 'WindowsSandbox'
+        }
+    }
+
+    $evidenceNames = @($TrialResult.InstallEvidence | ForEach-Object {
+            if ($_.DisplayName) { [string]$_.DisplayName } elseif ($_.displayName) { [string]$_.displayName } else { $null }
+        } | Where-Object { $_ })
+
+    return [PSCustomObject]@{
+        Verified = [bool]$TrialResult.Verified
+        ExitCode = $TrialResult.ExitCode
+        Message = [string]$TrialResult.Message
+        Observable = [PSCustomObject]@{
+            SilentUiDetected = [bool]$TrialResult.SilentUiDetected
+            InstallEvidenceCount = @($TrialResult.InstallEvidence).Count
+            InstallEvidenceNames = $evidenceNames
+            TimedOut = [bool]$TrialResult.TimedOut
+            KilledForUi = [bool]$TrialResult.KilledForUi
+        }
+        SilentUiDetected = [bool]$TrialResult.SilentUiDetected
+        InstallEvidence = @($TrialResult.InstallEvidence)
+        Method = 'WindowsSandbox'
+    }
+}
+
+function Test-InstallerCommandInSandbox {
+    <#
+    .SYNOPSIS
+        Runs one silent-install candidate command inside Windows Sandbox and returns verification evidence.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerPath,
+        [Parameter(Mandatory = $true)]
+        [string]$Command,
+        [string]$AppName = '',
+        [int]$TimeoutSeconds = 900,
+        [switch]$SkipLaunch
+    )
+
+    # Allow SkipLaunch session preparation on any OS so unit tests can validate WSB/guest contracts.
+    if (([System.Environment]::OSVersion.Platform -ne 'Win32NT') -and -not $SkipLaunch) {
+        return ConvertTo-AppGetterInstallerVerification -TrialResult $null `
+            -FallbackMessage 'Sandbox silent-switch trials require Windows and were skipped on this host.'
+    }
+
+    if (([System.Environment]::OSVersion.Platform -eq 'Win32NT') -and -not $SkipLaunch) {
+        $sandbox = Test-AppGetterWindowsSandbox
+        if (-not $sandbox.Enabled) {
+            return ConvertTo-AppGetterInstallerVerification -TrialResult $null `
+                -FallbackMessage ("Windows Sandbox is not available for silent-switch verification. {0}" -f $sandbox.Reason)
+        }
+    }
+
+    $session = $null
+    try {
+        $session = Start-AppGetterSandboxTrialSession `
+            -InstallerPath $InstallerPath `
+            -Command $Command `
+            -AppName $AppName `
+            -SkipLaunch:$SkipLaunch
+
+        if ($SkipLaunch) {
+            return [PSCustomObject]@{
+                Verified = $false
+                ExitCode = $null
+                Message = 'Sandbox trial session prepared but not launched (SkipLaunch).'
+                Observable = [PSCustomObject]@{
+                    SessionId = $session.SessionId
+                    HandshakeDirectory = $session.HandshakeDirectory
+                    PackageDirectory = $session.PackageDirectory
+                    WsbPath = $session.WsbPath
+                }
+                SilentUiDetected = $false
+                InstallEvidence = @()
+                Method = 'WindowsSandbox'
+                Session = $session
+            }
+        }
+
+        Write-AppGetterLog -Message "Sandbox trial started for command: $Command" -Level Info
+        $trial = Wait-AppGetterSandboxTrialResult -HandshakeDirectory $session.HandshakeDirectory -TimeoutSeconds $TimeoutSeconds
+        $verification = ConvertTo-AppGetterInstallerVerification -TrialResult $trial `
+            -FallbackMessage "Sandbox trial timed out after $TimeoutSeconds seconds without writing trial-result.json."
+        $verification | Add-Member -NotePropertyName Session -NotePropertyValue $session -Force
+        return $verification
+    } catch {
+        return ConvertTo-AppGetterInstallerVerification -TrialResult $null `
+            -FallbackMessage ("Sandbox trial failed to start: {0}" -f $_.Exception.Message)
+    } finally {
+        if ($session -and -not $SkipLaunch) {
+            Stop-AppGetterSandboxTrialSession -Session $session -Cleanup
+        }
+    }
+}
+
+function Get-AppGetterLiveTestInstaller {
+    <#
+    .SYNOPSIS
+        Returns a real downloadable installer for SandboxLive research tests (cached under the user temp folder).
+    #>
+    [CmdletBinding()]
+    param(
+        [ValidateSet('msi', 'exe')]
+        [string]$Kind = 'msi',
+        [string]$CacheDirectory
+    )
+
+    if (-not $CacheDirectory) {
+        $CacheDirectory = Join-Path ([System.IO.Path]::GetTempPath()) 'AppGetterLiveInstallers'
+    }
+    if (-not (Test-Path -LiteralPath $CacheDirectory)) {
+        New-Item -ItemType Directory -Path $CacheDirectory -Force | Out-Null
+    }
+
+    $catalog = @{
+        msi = @{
+            FileName = '7z2409-x64.msi'
+            Url = 'https://www.7-zip.org/a/7z2409-x64.msi'
+            AppName = '7-Zip'
+        }
+        exe = @{
+            FileName = '7z2409-x64.exe'
+            Url = 'https://www.7-zip.org/a/7z2409-x64.exe'
+            AppName = '7-Zip'
+        }
+    }
+
+    $entry = $catalog[$Kind]
+    $path = Join-Path $CacheDirectory $entry.FileName
+    if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).Length -lt 1024) {
+        Write-AppGetterLog -Message "Downloading live Sandbox test installer: $($entry.Url)" -Level Info
+        $null = Start-WebInstallerDownload -Url $entry.Url -OutputPath $path -FileName $entry.FileName
+    }
+
+    if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).Length -lt 1024) {
+        throw "Failed to download live test installer for kind '$Kind'."
+    }
+
+    return [PSCustomObject]@{
+        Path = $path
+        FileName = $entry.FileName
+        Url = $entry.Url
+        AppName = $entry.AppName
+        Kind = $Kind
+        Length = (Get-Item -LiteralPath $path).Length
     }
 }

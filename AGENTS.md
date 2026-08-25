@@ -34,7 +34,21 @@ Non-obvious caveats when running on Linux:
 - **Test in Sandbox** is Windows-only (Windows Sandbox / `Containers-DisposableClientVM`). On Linux,
   `Test-AppGetterWindowsSandbox` reports unsupported; host-side helpers and Pester tests under
   `AppGetter/Tests/Sandbox.Tests.ps1` still run.
+- **Silent-switch Sandbox research trials** (`Test-InstallerCommandInSandbox`, `-VerifySilentSwitches`)
+  are also Windows-only. On Linux, static fingerprinting/ranking still runs and packages are marked
+  `verified=false`; candidate trials and ARP/UI evidence collection are skipped.
+- Live Sandbox research Pester tests are tagged `SandboxLive` and are **excluded by default** from
+  `AppGetter/Run-Tests.ps1` so Linux CI stays green. On a Windows Pro/Enterprise host with Sandbox
+  enabled, run them with:
+  `pwsh -NoProfile -File AppGetter/Run-Tests.ps1 -Tag SandboxLive -ExcludeTag @()`
+  Those tests download a real 7-Zip MSI via `Get-AppGetterLiveTestInstaller` (cached under the temp
+  folder). Synthetic fixtures under `Tests/Fixtures/Installers/` are fingerprint-only stubs and are
+  not suitable for live Sandbox installs.
+- If a package folder has scripts/`app.json` but the `.msi`/`.exe` was not copied (common when a
+  package is pulled/shared without binaries), **Test in Sandbox** and `Start-AppGetterSandboxSession`
+  call `Restore-AppGetterPackageInstaller` to re-download from `app.json` `installerUrl`.
 
 Automated tests (optional): `pwsh -NoProfile -File AppGetter/Run-Tests.ps1`
+Static silent-switch corpus: `AppGetter/Tests/SwitchDiscovery.Tests.ps1` (Linux-safe).
 Validate packaging changes by running the script end-to-end against a real direct download URL
 and inspecting the generated files.

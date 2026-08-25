@@ -319,6 +319,9 @@ function Start-AppGetterBackgroundPackaging {
         foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath')) {
             if ($PackArguments[$key]) { $params[$key] = $PackArguments[$key] }
         }
+        if ($PackArguments.ContainsKey('VerifySilentSwitches') -and $PackArguments.VerifySilentSwitches) {
+            $params.VerifySilentSwitches = $true
+        }
         Invoke-AppGetterPackaging @params
     }).AddArgument($modulePath).
       AddArgument($PackArguments).
@@ -729,6 +732,7 @@ $supportUrlBox = $window.FindName('SupportUrlBox')
 $versionBox = $window.FindName('VersionBox')
 $outputPathBox = $window.FindName('OutputPathBox')
 $browseOutputButton = $window.FindName('BrowseOutputButton')
+$verifySilentSwitchesCheckBox = $window.FindName('VerifySilentSwitchesCheckBox')
 $progressBar = $window.FindName('ProgressBar')
 $progressStatus = $window.FindName('ProgressStatusText')
 $stepList = $window.FindName('StepList')
@@ -879,10 +883,13 @@ function Invoke-AppGetterSandboxTestFromUi {
         return
     }
 
-    $info = Get-AppGetterSandboxPackageInfo -VersionDirectory $dir
+    $info = Get-AppGetterSandboxPackageInfo -VersionDirectory $dir -RestoreInstaller
     if (-not $info.Ready) {
         [System.Windows.MessageBox]::Show($window, $info.Reason, 'AppGetter', 'OK', 'Warning') | Out-Null
         return
+    }
+    if ($info.InstallerRestore -and $info.InstallerRestore.Restored) {
+        Add-LogLine -LogControl $logText -Message $info.InstallerRestore.Message
     }
 
     $sandbox = Test-AppGetterWindowsSandbox
@@ -985,6 +992,9 @@ function Set-PackControlsEnabled {
     $versionBox.IsEnabled = $Enabled
     $browseOutputButton.IsEnabled = $Enabled
     $browseIconButton.IsEnabled = $Enabled
+    if ($verifySilentSwitchesCheckBox) {
+        $verifySilentSwitchesCheckBox.IsEnabled = $Enabled
+    }
     if ($installContentPrepButton.Visibility -eq [System.Windows.Visibility]::Visible) {
         if (-not $Enabled) {
             $installContentPrepButton.IsEnabled = $false
@@ -1120,6 +1130,7 @@ function Start-AppGetterPackagingFromUi {
         Publisher     = $publisherBox.Text.Trim()
         OutputPath    = $script:baseOutputPath
         IconPath      = $script:customIconPath
+        VerifySilentSwitches = [bool]($verifySilentSwitchesCheckBox -and $verifySilentSwitchesCheckBox.IsChecked)
     }
 
     $script:progressQueue = New-Object System.Collections.Concurrent.ConcurrentQueue[object]

@@ -25,6 +25,8 @@
         'Resolve-AppGetterPackageVersionDirectory'
         'Test-AppGetterSandboxPackage'
         'Get-AppGetterSandboxPackageInfo'
+        'Restore-AppGetterPackageInstaller'
+        'Get-AppGetterLiveTestInstaller'
         'Start-AppGetterSandboxSession'
         'Set-AppGetterSandboxCommand'
         'Get-AppGetterSandboxStatus'
@@ -38,6 +40,16 @@
         'Test-AppGetterSandboxConfirmations'
         'Complete-AppGetterSandboxTest'
         'Get-AppGetterPackageValidation'
+        'Test-InstallerCommandInSandbox'
+        'Start-AppGetterSandboxTrialSession'
+        'Get-AppGetterSandboxTrialResult'
+        'Wait-AppGetterSandboxTrialResult'
+        'Stop-AppGetterSandboxTrialSession'
+        'New-AppGetterSandboxTrialPackage'
+        'New-AppGetterSandboxTrialGuestScript'
+        'Test-AppGetterAcceptedInstallExitCode'
+        'Resolve-InstallerInstallCommand'
+        'Get-InstallerFingerprint'
     )
     PrivateData       = @{
         PSData = @{

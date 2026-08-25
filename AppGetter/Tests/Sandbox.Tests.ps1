@@ -83,6 +83,89 @@ Describe 'New-AppGetterSandboxGuestScript' {
     }
 }
 
+Describe 'Sandbox silent-switch trial helpers' {
+    It 'Generates a trial guest script that watches UI and writes trial-result.json' {
+        $script = New-AppGetterSandboxTrialGuestScript
+        $script | Should -Match 'trial-result.json'
+        $script | Should -Match 'silentUiDetected'
+        $script | Should -Match 'Get-UninstallRegistrySnapshot'
+        $script | Should -Match 'interactive window'
+        $script | Should -Match 'NOT SILENT'
+    }
+
+    It 'Treats UI detection as verification failure even with exit code 0' {
+        InModuleScope AppGetter {
+            $mapped = ConvertTo-AppGetterInstallerVerification -TrialResult ([PSCustomObject]@{
+                    Verified = $false
+                    ExitCode = 0
+                    SilentUiDetected = $true
+                    Message = 'not silent'
+                    InstallEvidence = @(@{ DisplayName = 'App' })
+                    TimedOut = $false
+                    KilledForUi = $true
+                })
+            $mapped.Verified | Should -Be $false
+            $mapped.SilentUiDetected | Should -Be $true
+            Test-AppGetterAcceptedInstallExitCode -ExitCode 0 | Should -Be $true
+            Test-AppGetterAcceptedInstallExitCode -ExitCode 1618 | Should -Be $false
+        }
+    }
+}
+
+Describe 'Restore-AppGetterPackageInstaller' {
+    BeforeEach {
+        $script:restoreDir = Join-Path ([System.IO.Path]::GetTempPath()) ("appgetter-restore-{0}" -f ([Guid]::NewGuid().ToString('N')))
+        New-Item -ItemType Directory -Path $script:restoreDir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:restoreDir 'install.ps1') -Value '# install'
+        Set-Content -LiteralPath (Join-Path $script:restoreDir 'detection.ps1') -Value '# detect'
+        Set-Content -LiteralPath (Join-Path $script:restoreDir 'uninstall.ps1') -Value '# uninstall'
+    }
+
+    AfterEach {
+        if ($script:restoreDir -and (Test-Path -LiteralPath $script:restoreDir)) {
+            Remove-Item -LiteralPath $script:restoreDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Reports missing installer and restores from http installerUrl' {
+        $info = Get-AppGetterSandboxPackageInfo -VersionDirectory $script:restoreDir
+        $info.Ready | Should -Be $false
+        $info.Reason | Should -Match 'No installer file'
+
+        @{
+            packageIdentifier = '7Zip'
+            displayName = '7-Zip'
+            version = '24.09'
+            installerUrl = 'https://www.7-zip.org/a/7z2409-x64.msi'
+            installerFilename = '7z2409-x64.msi'
+            hash = 'EC6AF1EA0367D16DDE6639A89A080A524CEBC4D4BEDFE00ED0CAC4B865A918D8'
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:restoreDir 'app.json') -Encoding UTF8
+
+        $restore = Restore-AppGetterPackageInstaller -VersionDirectory $script:restoreDir
+        $restore.Restored | Should -Be $true
+        Test-Path -LiteralPath $restore.InstallerPath | Should -Be $true
+        (Get-Item -LiteralPath $restore.InstallerPath).Length | Should -BeGreaterThan 100000
+
+        $ready = Get-AppGetterSandboxPackageInfo -VersionDirectory $script:restoreDir -RestoreInstaller
+        $ready.Ready | Should -Be $true
+        $ready.InstallerFile | Should -Match '7z2409-x64\.msi$'
+    }
+
+    It 'Does not treat local installerUrl paths as downloadable' {
+        @{
+            packageIdentifier = 'Local.App'
+            displayName = 'Local App'
+            version = '1.0'
+            installerUrl = 'C:\Installers\setup.msi'
+            installerFilename = 'setup.msi'
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:restoreDir 'app.json') -Encoding UTF8
+
+        $restore = Restore-AppGetterPackageInstaller -VersionDirectory $script:restoreDir
+        $restore.Restored | Should -Be $false
+        $restore.Message | Should -Match 'http'
+    }
+}
+
 Describe 'Resolve-AppGetterPackageVersionDirectory' {
     BeforeAll {
         $script:packageRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("appgetter-sandbox-pkg-{0}" -f ([Guid]::NewGuid().ToString('N')))

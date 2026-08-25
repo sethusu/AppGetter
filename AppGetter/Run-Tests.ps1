@@ -4,7 +4,9 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Path = (Join-Path $PSScriptRoot 'Tests')
+    [string]$Path = (Join-Path $PSScriptRoot 'Tests'),
+    [string[]]$Tag,
+    [string[]]$ExcludeTag = @('SandboxLive')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,4 +23,12 @@ $config.Run.Path = $Path
 $config.Run.Exit = $true
 $config.Output.Verbosity = 'Detailed'
 
+if ($Tag -and $Tag.Count -gt 0) {
+    $config.Filter.Tag = $Tag
+}
+if ($ExcludeTag -and $ExcludeTag.Count -gt 0) {
+    $config.Filter.ExcludeTag = $ExcludeTag
+}
+
+Write-Host "Running Pester tests under $Path (ExcludeTag: $($ExcludeTag -join ', '))" -ForegroundColor Cyan
 Invoke-Pester -Configuration $config
