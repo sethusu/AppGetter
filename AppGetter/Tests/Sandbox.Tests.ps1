@@ -164,6 +164,36 @@ Describe 'Restore-AppGetterPackageInstaller' {
         $restore.Restored | Should -Be $false
         $restore.Message | Should -Match 'http'
     }
+
+    It 'Renames extensionless installer payloads so Sandbox can find them' {
+        $msiSource = Join-Path $PSScriptRoot 'Fixtures' 'Installers' 'sample.msi'
+        if (-not (Test-Path -LiteralPath $msiSource)) {
+            Set-ItResult -Skipped -Because 'sample.msi fixture is missing'
+            return
+        }
+
+        $extensionless = Join-Path $script:restoreDir 'download-the-v-one-software'
+        Copy-Item -LiteralPath $msiSource -Destination $extensionless -Force
+        @{
+            packageIdentifier = 'Voltera.VOne'
+            displayName = 'Voltera V-One'
+            version = 'latest'
+            installerUrl = 'https://example.com/download-the-v-one-software'
+            installerFilename = 'download-the-v-one-software'
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:restoreDir 'app.json') -Encoding UTF8
+
+        @"
+`$installCommand = @'
+"download-the-v-one-software" /S
+'@
+"@ | Set-Content -LiteralPath (Join-Path $script:restoreDir 'install.ps1') -Encoding UTF8
+
+        $info = Get-AppGetterSandboxPackageInfo -VersionDirectory $script:restoreDir -RestoreInstaller
+        $info.Ready | Should -Be $true
+        $info.InstallerFile | Should -Match '\.msi$'
+        Test-Path -LiteralPath (Join-Path $script:restoreDir 'download-the-v-one-software.msi') | Should -Be $true
+        (Get-Content -LiteralPath (Join-Path $script:restoreDir 'install.ps1') -Raw) | Should -Match 'download-the-v-one-software\.msi'
+    }
 }
 
 Describe 'Resolve-AppGetterPackageVersionDirectory' {

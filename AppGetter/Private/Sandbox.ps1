@@ -484,10 +484,7 @@ function Get-AppGetterPackageInstallerCandidates {
     }
 
     return @(Get-ChildItem -LiteralPath $VersionDirectory -File -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.Extension -in '.exe', '.msi', '.msix', '.appx' -and
-                $_.Name -notlike '*intunewin*'
-            } |
+            Where-Object { Test-AppGetterInstallerCandidateFile -File $_ } |
             Sort-Object LastWriteTime -Descending)
 }
 
@@ -522,10 +519,55 @@ function Restore-AppGetterPackageInstaller {
 
     $existing = @(Get-AppGetterPackageInstallerCandidates -VersionDirectory $VersionDirectory)
     if ($existing.Count -gt 0 -and -not $Force) {
-        $result.AlreadyPresent = $true
-        $result.InstallerPath = $existing[0].FullName
-        $result.Message = "Installer already present: $($existing[0].Name)"
-        return [PSCustomObject]$result
+        $candidate = $existing[0]
+        $ext = $candidate.Extension.ToLowerInvariant()
+        if ($ext -notin '.exe', '.msi', '.msix', '.appx') {
+            try {
+                $repairedExisting = Repair-AppGetterInstallerFileName -Path $candidate.FullName -PreferredFileName $candidate.Name
+                if ($repairedExisting.Renamed) {
+                    Update-AppGetterPackageInstallerReferences -VersionDirectory $VersionDirectory `
+                        -OldFileName $repairedExisting.PreviousFileName -NewFileName $repairedExisting.FileName
+                    $result.Restored = $true
+                    $result.InstallerPath = $repairedExisting.Path
+                    $result.Message = "Normalized existing installer to $($repairedExisting.FileName)"
+                    Write-AppGetterLog -Message $result.Message -Level Success
+                    return [PSCustomObject]$result
+                }
+            } catch {
+                # Fall through to re-download if normalization fails.
+            }
+        } else {
+            $result.AlreadyPresent = $true
+            $result.InstallerPath = $candidate.FullName
+            $result.Message = "Installer already present: $($candidate.Name)"
+            return [PSCustomObject]$result
+        }
+    }
+
+    # Extensionless leftovers from marketing URLs (already on disk) — normalize before re-downloading.
+    $looseFiles = @(Get-ChildItem -LiteralPath $VersionDirectory -File -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -notlike '*intunewin*' -and
+                $_.Extension -notin '.ps1', '.json', '.md', '.txt', '.png', '.jpg', '.jpeg', '.log', '.wsb',
+                '.exe', '.msi', '.msix', '.appx'
+            })
+    foreach ($loose in $looseFiles) {
+        $detected = Get-AppGetterInstallerExtensionFromBytes -Path $loose.FullName
+        if (-not $detected) { continue }
+        try {
+            $repairedLoose = Repair-AppGetterInstallerFileName -Path $loose.FullName -PreferredFileName $loose.Name
+            if ($repairedLoose.Renamed) {
+                Update-AppGetterPackageInstallerReferences -VersionDirectory $VersionDirectory `
+                    -OldFileName $repairedLoose.PreviousFileName -NewFileName $repairedLoose.FileName
+            }
+            $result.Restored = $true
+            $result.InstallerPath = $repairedLoose.Path
+            $result.Message = "Normalized existing installer to $($repairedLoose.FileName)"
+            Write-AppGetterLog -Message $result.Message -Level Success
+            return [PSCustomObject]$result
+        } catch {
+            continue
+        }
     }
 
     $appJsonPath = Join-Path $VersionDirectory 'app.json'
@@ -582,6 +624,21 @@ function Restore-AppGetterPackageInstaller {
         return [PSCustomObject]$result
     }
 
+    try {
+        $repaired = Repair-AppGetterInstallerFileName -Path $destination -PreferredFileName $fileName
+        $destination = $repaired.Path
+        $fileName = $repaired.FileName
+        if ($repaired.Renamed) {
+            Write-AppGetterLog -Message "Normalized installer file name to $fileName (detected $($repaired.Extension))" -Level Success
+            Update-AppGetterPackageInstallerReferences -VersionDirectory $VersionDirectory `
+                -OldFileName $repaired.PreviousFileName -NewFileName $repaired.FileName
+        }
+    } catch {
+        Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
+        $result.Message = $_.Exception.Message
+        return [PSCustomObject]$result
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($expectedHash)) {
         $actualHash = (Get-FileHash -Path $destination -Algorithm SHA256).Hash
         if (-not [string]::Equals($actualHash, $expectedHash, [StringComparison]::OrdinalIgnoreCase)) {
@@ -589,6 +646,14 @@ function Restore-AppGetterPackageInstaller {
             $result.Message = "Restored installer hash mismatch. Expected $expectedHash, got $actualHash."
             return [PSCustomObject]$result
         }
+    }
+
+    # Final readiness check using installer candidate rules.
+    $recognized = @(Get-AppGetterPackageInstallerCandidates -VersionDirectory $VersionDirectory |
+            Where-Object { $_.FullName -eq $destination })
+    if ($recognized.Count -eq 0) {
+        $result.Message = "Restored '$fileName' but it was not recognized as an installer (.exe/.msi/.msix/.appx)."
+        return [PSCustomObject]$result
     }
 
     $result.Restored = $true

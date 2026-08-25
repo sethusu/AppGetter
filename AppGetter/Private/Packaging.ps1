@@ -89,11 +89,28 @@ function Invoke-AppGetterPackaging {
             $installerDestination = Join-Path $versionDirectory $installerFileName
             $null = Start-WebInstallerDownload -Url $finalDownloadUrl -OutputPath $installerDestination `
                 -FileName $installerFileName -OnProgress $OnProgress
+
+            $repaired = Repair-AppGetterInstallerFileName -Path $installerDestination -PreferredFileName $installerFileName
+            if ($repaired.Renamed) {
+                Write-AppGetterLog -Message "Normalized downloaded installer name to $($repaired.FileName) (detected $($repaired.Extension))" `
+                    -Level Success -OnProgress $OnProgress
+                $installerDestination = $repaired.Path
+                $installerFileName = $repaired.FileName
+            }
         }
 
         $installerFile = Get-Item $installerDestination
         $installerExtension = $installerFile.Extension.ToLower()
 
+        if ([string]::IsNullOrWhiteSpace($installerExtension)) {
+            $detected = Get-AppGetterInstallerExtensionFromBytes -Path $installerFile.FullName
+            if ($detected) {
+                $repaired = Repair-AppGetterInstallerFileName -Path $installerFile.FullName -PreferredFileName $installerFile.Name
+                $installerFile = Get-Item $repaired.Path
+                $installerFileName = $repaired.FileName
+                $installerExtension = $installerFile.Extension.ToLower()
+            }
+        }
         if ($installerExtension -in '.zip', '.7z') {
             throw 'Archive files require manual extraction. Provide InstallCommand after extracting the installer.'
         }
