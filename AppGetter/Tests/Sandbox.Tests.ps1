@@ -87,10 +87,14 @@ Describe 'Sandbox silent-switch trial helpers' {
     It 'Generates a trial guest script that watches UI and writes trial-result.json' {
         $script = New-AppGetterSandboxTrialGuestScript
         $script | Should -Match 'trial-result.json'
+        $script | Should -Match 'trial-command.json'
+        $script | Should -Match 'Invoke-SilentSwitchTrial'
         $script | Should -Match 'silentUiDetected'
         $script | Should -Match 'Get-UninstallRegistrySnapshot'
         $script | Should -Match 'interactive window'
         $script | Should -Match 'NOT SILENT'
+        $script | Should -Match 'Waiting for trial command from AppGetter'
+        $script | Should -Match 'shutdown'
     }
 
     It 'Treats UI detection as verification failure even with exit code 0' {
@@ -422,6 +426,31 @@ Describe 'Set-AppGetterSandboxCommand' {
             Set-AppGetterSandboxCommand -HandshakeDirectory $handshake -Action detect
             $command = Get-Content -LiteralPath (Join-Path $handshake 'command.json') -Raw | ConvertFrom-Json
             $command.action | Should -Be 'detect'
+        } finally {
+            Remove-Item -LiteralPath $handshake -Recurse -Force
+        }
+    }
+}
+
+Describe 'Set-AppGetterSandboxTrialCommand' {
+    It 'Updates trial-command.json with the next trial or shutdown action' {
+        $handshake = Join-Path ([System.IO.Path]::GetTempPath()) ("appgetter-trial-cmd-{0}" -f ([Guid]::NewGuid().ToString('N')))
+        New-Item -ItemType Directory -Path $handshake -Force | Out-Null
+        try {
+            Set-AppGetterSandboxTrialCommand `
+                -HandshakeDirectory $handshake `
+                -Action trial `
+                -Command '"setup.exe" /quiet' `
+                -AppName 'Sample' `
+                -TrialId 'abc123'
+            $command = Get-Content -LiteralPath (Join-Path $handshake 'trial-command.json') -Raw | ConvertFrom-Json
+            $command.action | Should -Be 'trial'
+            $command.command | Should -Be '"setup.exe" /quiet'
+            $command.trialId | Should -Be 'abc123'
+
+            Set-AppGetterSandboxTrialCommand -HandshakeDirectory $handshake -Action shutdown
+            $shutdown = Get-Content -LiteralPath (Join-Path $handshake 'trial-command.json') -Raw | ConvertFrom-Json
+            $shutdown.action | Should -Be 'shutdown'
         } finally {
             Remove-Item -LiteralPath $handshake -Recurse -Force
         }

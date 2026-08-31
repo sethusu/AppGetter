@@ -2440,7 +2440,8 @@ function Test-AppGetterAcceptedInstallExitCode {
 function New-AppGetterSandboxTrialGuestScript {
     <#
     .SYNOPSIS
-        Guest coordinator for silent-switch discovery trials (single install command + evidence).
+        Guest coordinator for silent-switch discovery trials. Reuses one Sandbox VM for
+        multiple try / pass-fail / retry cycles driven by trial-command.json from the host.
     #>
     return @'
 $ErrorActionPreference = 'Continue'
@@ -2602,19 +2603,194 @@ function Get-UninstallRegistrySnapshot {
     return $entries
 }
 
-function Read-TrialRequest {
-    foreach ($candidate in @(
-            (Join-Path $packageRoot 'trial-request.json'),
-            (Join-Path $mappedPackageRoot 'trial-request.json'),
-            (Join-Path $handshakeRoot 'trial-request.json')
-        )) {
-        if (Test-Path -LiteralPath $candidate) {
-            try {
-                return (Get-Content -LiteralPath $candidate -Raw -ErrorAction Stop | ConvertFrom-Json)
-            } catch { }
+function Read-TrialCommand {
+    $path = Join-Path $handshakeRoot 'trial-command.json'
+    if (-not (Test-Path -LiteralPath $path)) {
+        return $null
+    }
+    try {
+        $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+        return ($raw | ConvertFrom-Json)
+    } catch {
+        return $null
+    }
+}
+
+function Invoke-SilentSwitchTrial {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Command,
+        [string]$AppName = '',
+        [string]$TrialId = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($TrialId)) {
+        $TrialId = [Guid]::NewGuid().ToString('N')
+    }
+
+    $stepLogDir = Join-Path $handshakeRoot ("logs\trial-$TrialId")
+    New-Item -ItemType Directory -Path $stepLogDir -Force | Out-Null
+
+    $before = Get-UninstallRegistrySnapshot
+    $windowBaseline = Get-InteractiveWindowSnapshot
+    $uiEvents = New-Object System.Collections.Generic.List[object]
+    $killedForUi = $false
+    $timedOut = $false
+    $uiDetectedAt = $null
+    $ignoredSplashIds = @{}
+    $localStepDir = Join-Path $env:TEMP ("AppGetterTrial-$TrialId")
+    if (Test-Path -LiteralPath $localStepDir) {
+        Remove-Item -LiteralPath $localStepDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    New-Item -ItemType Directory -Path $localStepDir -Force | Out-Null
+    $stdoutPath = Join-Path $localStepDir 'console-stdout.txt'
+    $stderrPath = Join-Path $localStepDir 'console-stderr.txt'
+
+    Set-Location -Path $packageRoot
+    Write-GuestLog "Executing trial command (trialId=$TrialId): $Command"
+    Write-Status -Step 'trial' -State 'running' -Message 'Starting silent-switch discovery trial.'
+
+    $process = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $Command) -PassThru -NoNewWindow `
+        -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    $deadline = (Get-Date).AddMinutes(12)
+
+    while ($process) {
+        try { $process.Refresh() } catch { }
+        if ($process.HasExited) { break }
+        Write-Heartbeat
+        if ((Get-Date) -gt $deadline) {
+            $timedOut = $true
+            Write-GuestLog 'Timed out waiting for trial command after 12 minutes.'
+            Stop-ProcessTree -Id $process.Id
+            break
+        }
+
+        Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.MainWindowHandle -eq 0 -or $_.MainWindowHandle -eq [IntPtr]::Zero) { return }
+            if ($windowBaseline.ContainsKey($_.Id)) { return }
+            if (Test-IgnoredUiProcess -ProcessName $_.ProcessName) { return }
+            $title = [string]$_.MainWindowTitle
+            if ([string]::IsNullOrWhiteSpace($title)) { $title = '(visible window, no title)' }
+            if (Test-IgnoredInstallerSplash -ProcessName $_.ProcessName -Title $title) {
+                if (-not $ignoredSplashIds.ContainsKey($_.Id)) {
+                    $ignoredSplashIds[$_.Id] = $true
+                    Write-GuestLog ("Ignoring Inno extractor window '{0}' ({1})." -f $title, $_.ProcessName)
+                }
+                return
+            }
+            foreach ($existing in $uiEvents) {
+                if ($existing.processId -eq $_.Id) { return }
+            }
+            $uiEvents.Add(@{
+                processName = $_.ProcessName
+                windowTitle = $title
+                processId = $_.Id
+                detectedAt = (Get-Date).ToUniversalTime().ToString('o')
+            }) | Out-Null
+            if (-not $uiDetectedAt) {
+                $uiDetectedAt = Get-Date
+                $shotPath = Join-Path $stepLogDir 'ui-detected.png'
+                if (Save-DesktopScreenshot -Path $shotPath) {
+                    Write-GuestLog "Saved UI screenshot to $shotPath"
+                }
+            }
+            Write-GuestLog ("WARNING: interactive window during trial: '{0}' ({1})." -f $title, $_.ProcessName)
+            Write-Status -Step 'trial' -State 'running' -Message ("NOT SILENT: '{0}' ({1})" -f $title, $_.ProcessName) `
+                -SilentUiDetected $true -SilentUiWindows @($uiEvents)
+        }
+
+        if ($uiDetectedAt -and -not $killedForUi) {
+            if (((Get-Date) - $uiDetectedAt).TotalSeconds -ge 12) {
+                $killedForUi = $true
+                Write-GuestLog 'Stopping trial because an interactive window blocked a silent install.'
+                Stop-ProcessTree -Id $process.Id
+                break
+            }
+        }
+        Start-Sleep -Seconds 1
+    }
+
+    if ($process -and -not $process.HasExited) {
+        try { $process.WaitForExit(20000) | Out-Null } catch { }
+        try { $process.Refresh() } catch { }
+    }
+    if ($process -and -not $process.HasExited) {
+        Stop-ProcessTree -Id $process.Id
+    }
+
+    $exitCode = 1603
+    if ($killedForUi -or $timedOut) {
+        $exitCode = 1603
+    } elseif ($process -and $null -ne $process.ExitCode) {
+        $exitCode = [int]$process.ExitCode
+    }
+
+    foreach ($sourcePath in @($stdoutPath, $stderrPath)) {
+        if ($sourcePath -and (Test-Path -LiteralPath $sourcePath)) {
+            Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $stepLogDir ([System.IO.Path]::GetFileName($sourcePath))) -Force -ErrorAction SilentlyContinue
         }
     }
-    return $null
+
+    Start-Sleep -Seconds 2
+    $after = Get-UninstallRegistrySnapshot
+    $installEvidence = New-Object System.Collections.Generic.List[object]
+    foreach ($key in $after.Keys) {
+        if ($before.ContainsKey($key)) { continue }
+        $entry = $after[$key]
+        $nameMatch = $true
+        if (-not [string]::IsNullOrWhiteSpace($appName)) {
+            $nameMatch = $entry.DisplayName -like ("*{0}*" -f $appName) -or $appName -like ("*{0}*" -f $entry.DisplayName)
+        }
+        if ($nameMatch -or [string]::IsNullOrWhiteSpace($appName)) {
+            $installEvidence.Add($entry) | Out-Null
+        }
+    }
+
+    if ($installEvidence.Count -eq 0) {
+        foreach ($key in $after.Keys) {
+            if (-not $before.ContainsKey($key)) {
+                $installEvidence.Add($after[$key]) | Out-Null
+            }
+        }
+    }
+
+    $silentUi = ($uiEvents.Count -gt 0)
+    $acceptedExit = ($exitCode -eq 0 -or $exitCode -eq 3010 -or $exitCode -eq 1641)
+    $verified = (-not $silentUi) -and $acceptedExit -and ($installEvidence.Count -gt 0)
+
+    $message = "Trial finished with exit code $exitCode."
+    if ($silentUi) {
+        $titles = @($uiEvents | ForEach-Object { $_.windowTitle }) -join '; '
+        $message = "Trial was not silent. Interactive window(s): $titles. Exit code $exitCode."
+    } elseif (-not $acceptedExit) {
+        $message = "Trial command failed with exit code $exitCode."
+    } elseif ($installEvidence.Count -eq 0) {
+        $message = "Trial exit code $exitCode was accepted, but no new uninstall registry evidence was found."
+    } else {
+        $message = "Trial verified silent install. Exit code $exitCode. New ARP entries: $($installEvidence.Count)."
+    }
+
+    $result = [ordered]@{
+        verified = [bool]$verified
+        exitCode = [int]$exitCode
+        silentUiDetected = [bool]$silentUi
+        silentUiWindows = @($uiEvents)
+        message = $message
+        command = $Command
+        appName = $appName
+        trialId = $TrialId
+        installEvidence = @($installEvidence)
+        timedOut = [bool]$timedOut
+        killedForUi = [bool]$killedForUi
+        finishedAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    Write-GuestJson -Path (Join-Path $handshakeRoot 'trial-result.json') -Object $result
+    Write-GuestJson -Path (Join-Path $stepLogDir 'trial-result.json') -Object $result
+    Write-GuestLog $message
+    Write-Status -Step 'trial' -State $(if ($verified) { 'completed' } else { 'failed' }) `
+        -ExitCode $exitCode -Message $message -SilentUiDetected $silentUi -SilentUiWindows @($uiEvents)
+    Write-Status -Step 'idle' -State 'waiting' -Message 'Trial finished. Waiting for next command from host.'
 }
 
 if (-not (Test-Path -LiteralPath $handshakeRoot)) {
@@ -2625,7 +2801,13 @@ if (-not (Test-Path -LiteralPath $packageRoot)) {
 }
 
 $deadline = (Get-Date).AddMinutes(2)
-while (-not (Test-Path -LiteralPath (Join-Path $mappedPackageRoot 'trial-request.json'))) {
+while ($true) {
+    $installerFound = $false
+    if (Test-Path -LiteralPath $mappedPackageRoot) {
+        $installerFound = @(Get-ChildItem -LiteralPath $mappedPackageRoot -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in '.msi', '.exe', '.msp' }).Count -gt 0
+    }
+    if ($installerFound) { break }
     if ((Get-Date) -gt $deadline) {
         Write-GuestLog "Mapped trial package not available: $mappedPackageRoot"
         Write-GuestJson -Path (Join-Path $handshakeRoot 'trial-result.json') -Object @{
@@ -2642,186 +2824,47 @@ while (-not (Test-Path -LiteralPath (Join-Path $mappedPackageRoot 'trial-request
 
 Copy-Item -Path (Join-Path $mappedPackageRoot '*') -Destination $packageRoot -Recurse -Force
 Write-GuestLog "Copied trial files to $packageRoot"
+Write-GuestLog 'Windows Sandbox trial coordinator is ready.'
 Write-Heartbeat
-Write-Status -Step 'trial' -State 'running' -Message 'Starting silent-switch discovery trial.'
+Write-Status -Step 'idle' -State 'waiting' -Message 'Waiting for trial command from AppGetter.'
 
-$request = Read-TrialRequest
-if (-not $request -or [string]::IsNullOrWhiteSpace([string]$request.command)) {
-    Write-GuestJson -Path (Join-Path $handshakeRoot 'trial-result.json') -Object @{
-        verified = $false
-        exitCode = 1
-        silentUiDetected = $false
-        message = 'trial-request.json was missing or did not include a command.'
-        installEvidence = @()
-    }
-    Write-Status -Step 'trial' -State 'failed' -ExitCode 1 -Message 'Missing trial command.'
-    return
-}
-
-$command = [string]$request.command
-$appName = [string]$request.appName
-$stepLogDir = Join-Path $handshakeRoot 'logs\trial'
-New-Item -ItemType Directory -Path $stepLogDir -Force | Out-Null
-
-$before = Get-UninstallRegistrySnapshot
-$windowBaseline = Get-InteractiveWindowSnapshot
-$uiEvents = New-Object System.Collections.Generic.List[object]
-$killedForUi = $false
-$timedOut = $false
-$uiDetectedAt = $null
-$ignoredSplashIds = @{}
-$localStepDir = Join-Path $env:TEMP 'AppGetterTrial'
-if (Test-Path -LiteralPath $localStepDir) {
-    Remove-Item -LiteralPath $localStepDir -Recurse -Force -ErrorAction SilentlyContinue
-}
-New-Item -ItemType Directory -Path $localStepDir -Force | Out-Null
-$stdoutPath = Join-Path $localStepDir 'console-stdout.txt'
-$stderrPath = Join-Path $localStepDir 'console-stderr.txt'
-
-Set-Location -Path $packageRoot
-Write-GuestLog "Executing trial command: $command"
-$process = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $command) -PassThru -NoNewWindow `
-    -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-$deadline = (Get-Date).AddMinutes(12)
-
-while ($process) {
-    try { $process.Refresh() } catch { }
-    if ($process.HasExited) { break }
+$lastTrialId = ''
+while ($true) {
     Write-Heartbeat
-    if ((Get-Date) -gt $deadline) {
-        $timedOut = $true
-        Write-GuestLog 'Timed out waiting for trial command after 12 minutes.'
-        Stop-ProcessTree -Id $process.Id
-        break
+    $cmd = Read-TrialCommand
+    if (-not $cmd) {
+        Start-Sleep -Seconds 1
+        continue
     }
 
-    Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
-        if ($_.MainWindowHandle -eq 0 -or $_.MainWindowHandle -eq [IntPtr]::Zero) { return }
-        if ($windowBaseline.ContainsKey($_.Id)) { return }
-        if (Test-IgnoredUiProcess -ProcessName $_.ProcessName) { return }
-        $title = [string]$_.MainWindowTitle
-        if ([string]::IsNullOrWhiteSpace($title)) { $title = '(visible window, no title)' }
-        if (Test-IgnoredInstallerSplash -ProcessName $_.ProcessName -Title $title) {
-            if (-not $ignoredSplashIds.ContainsKey($_.Id)) {
-                $ignoredSplashIds[$_.Id] = $true
-                Write-GuestLog ("Ignoring Inno extractor window '{0}' ({1})." -f $title, $_.ProcessName)
-            }
-            return
-        }
-        foreach ($existing in $uiEvents) {
-            if ($existing.processId -eq $_.Id) { return }
-        }
-        $uiEvents.Add(@{
-            processName = $_.ProcessName
-            windowTitle = $title
-            processId = $_.Id
-            detectedAt = (Get-Date).ToUniversalTime().ToString('o')
-        }) | Out-Null
-        if (-not $uiDetectedAt) {
-            $uiDetectedAt = Get-Date
-            $shotPath = Join-Path $stepLogDir 'ui-detected.png'
-            if (Save-DesktopScreenshot -Path $shotPath) {
-                Write-GuestLog "Saved UI screenshot to $shotPath"
-            }
-        }
-        Write-GuestLog ("WARNING: interactive window during trial: '{0}' ({1})." -f $title, $_.ProcessName)
-        Write-Status -Step 'trial' -State 'running' -Message ("NOT SILENT: '{0}' ({1})" -f $title, $_.ProcessName) `
-            -SilentUiDetected $true -SilentUiWindows @($uiEvents)
+    $action = [string]$cmd.action
+    if ($action -eq 'shutdown') {
+        Write-GuestLog 'Shutdown requested.'
+        Write-Status -Step 'shutdown' -State 'completed' -ExitCode 0 -Message 'Sandbox shutdown requested.'
+        Start-Sleep -Seconds 1
+        try { Stop-Computer -Force } catch { }
+        return
     }
 
-    if ($uiDetectedAt -and -not $killedForUi) {
-        if (((Get-Date) - $uiDetectedAt).TotalSeconds -ge 12) {
-            $killedForUi = $true
-            Write-GuestLog 'Stopping trial because an interactive window blocked a silent install.'
-            Stop-ProcessTree -Id $process.Id
-            break
+    if ($action -eq 'trial') {
+        $trialId = [string]$cmd.trialId
+        $command = [string]$cmd.command
+        if ([string]::IsNullOrWhiteSpace($trialId) -or [string]::IsNullOrWhiteSpace($command)) {
+            Start-Sleep -Seconds 1
+            continue
         }
+        if ($trialId -eq $lastTrialId) {
+            Start-Sleep -Seconds 1
+            continue
+        }
+
+        $lastTrialId = $trialId
+        $appName = [string]$cmd.appName
+        Invoke-SilentSwitchTrial -Command $command -AppName $appName -TrialId $trialId
     }
+
     Start-Sleep -Seconds 1
 }
-
-if ($process -and -not $process.HasExited) {
-    try { $process.WaitForExit(20000) | Out-Null } catch { }
-    try { $process.Refresh() } catch { }
-}
-if ($process -and -not $process.HasExited) {
-    Stop-ProcessTree -Id $process.Id
-}
-
-$exitCode = 1603
-if ($killedForUi -or $timedOut) {
-    $exitCode = 1603
-} elseif ($process -and $null -ne $process.ExitCode) {
-    $exitCode = [int]$process.ExitCode
-}
-
-foreach ($sourcePath in @($stdoutPath, $stderrPath)) {
-    if ($sourcePath -and (Test-Path -LiteralPath $sourcePath)) {
-        Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $stepLogDir ([System.IO.Path]::GetFileName($sourcePath))) -Force -ErrorAction SilentlyContinue
-    }
-}
-
-Start-Sleep -Seconds 2
-$after = Get-UninstallRegistrySnapshot
-$installEvidence = New-Object System.Collections.Generic.List[object]
-foreach ($key in $after.Keys) {
-    if ($before.ContainsKey($key)) { continue }
-    $entry = $after[$key]
-    $nameMatch = $true
-    if (-not [string]::IsNullOrWhiteSpace($appName)) {
-        $nameMatch = $entry.DisplayName -like ("*{0}*" -f $appName) -or $appName -like ("*{0}*" -f $entry.DisplayName)
-    }
-    if ($nameMatch -or [string]::IsNullOrWhiteSpace($appName)) {
-        $installEvidence.Add($entry) | Out-Null
-    }
-}
-
-# If AppName filter excluded everything, keep all new ARP entries as weak evidence.
-if ($installEvidence.Count -eq 0) {
-    foreach ($key in $after.Keys) {
-        if (-not $before.ContainsKey($key)) {
-            $installEvidence.Add($after[$key]) | Out-Null
-        }
-    }
-}
-
-$silentUi = ($uiEvents.Count -gt 0)
-$acceptedExit = ($exitCode -eq 0 -or $exitCode -eq 3010 -or $exitCode -eq 1641)
-$verified = (-not $silentUi) -and $acceptedExit -and ($installEvidence.Count -gt 0)
-
-$message = "Trial finished with exit code $exitCode."
-if ($silentUi) {
-    $titles = @($uiEvents | ForEach-Object { $_.windowTitle }) -join '; '
-    $message = "Trial was not silent. Interactive window(s): $titles. Exit code $exitCode."
-} elseif (-not $acceptedExit) {
-    $message = "Trial command failed with exit code $exitCode."
-} elseif ($installEvidence.Count -eq 0) {
-    $message = "Trial exit code $exitCode was accepted, but no new uninstall registry evidence was found."
-} else {
-    $message = "Trial verified silent install. Exit code $exitCode. New ARP entries: $($installEvidence.Count)."
-}
-
-$result = [ordered]@{
-    verified = [bool]$verified
-    exitCode = [int]$exitCode
-    silentUiDetected = [bool]$silentUi
-    silentUiWindows = @($uiEvents)
-    message = $message
-    command = $command
-    appName = $appName
-    installEvidence = @($installEvidence)
-    timedOut = [bool]$timedOut
-    killedForUi = [bool]$killedForUi
-    finishedAt = (Get-Date).ToUniversalTime().ToString('o')
-}
-Write-GuestJson -Path (Join-Path $handshakeRoot 'trial-result.json') -Object $result
-Write-GuestJson -Path (Join-Path $stepLogDir 'trial-result.json') -Object $result
-Write-GuestLog $message
-Write-Status -Step 'trial' -State $(if ($verified) { 'completed' } else { 'failed' }) `
-    -ExitCode $exitCode -Message $message -SilentUiDetected $silentUi -SilentUiWindows @($uiEvents)
-
-Start-Sleep -Seconds 2
-try { Stop-Computer -Force } catch { }
 '@
 }
 
@@ -2829,8 +2872,7 @@ function New-AppGetterSandboxTrialPackage {
     param(
         [Parameter(Mandatory = $true)]
         [string]$InstallerPath,
-        [Parameter(Mandatory = $true)]
-        [string]$Command,
+        [string]$Command = '',
         [string]$AppName = '',
         [string]$DestinationPath
     )
@@ -2860,6 +2902,11 @@ function New-AppGetterSandboxTrialPackage {
         createdAt = (Get-Date).ToUniversalTime().ToString('o')
     }
     Write-AppGetterSandboxJson -Path (Join-Path $DestinationPath 'trial-request.json') -Object $request
+    Write-AppGetterSandboxJson -Path (Join-Path $DestinationPath 'package-info.json') -Object @{
+        installerFileName = $installerName
+        appName = $AppName
+        createdAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
 
     return [PSCustomObject]@{
         PackageDirectory = $DestinationPath
@@ -2873,14 +2920,13 @@ function New-AppGetterSandboxTrialPackage {
 function Start-AppGetterSandboxTrialSession {
     <#
     .SYNOPSIS
-        Starts a Windows Sandbox session that runs one silent-switch discovery trial.
+        Starts a Windows Sandbox session that can run multiple silent-switch discovery trials.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
         [string]$InstallerPath,
-        [Parameter(Mandatory = $true)]
-        [string]$Command,
+        [string]$Command = '',
         [string]$AppName = '',
         [switch]$SkipLaunch,
         [int]$MemoryInMB = 4096
@@ -2895,11 +2941,12 @@ function Start-AppGetterSandboxTrialSession {
     $guestScriptPath = Join-Path $handshake 'Start-AppGetterSandboxTrialGuest.ps1'
     Set-Content -LiteralPath $guestScriptPath -Value (New-AppGetterSandboxTrialGuestScript) -Encoding UTF8
 
-    Write-AppGetterSandboxJson -Path (Join-Path $handshake 'trial-request.json') -Object @{
-        command = $Command
+    Write-AppGetterSandboxJson -Path (Join-Path $handshake 'trial-command.json') -Object @{
+        action = 'idle'
+        command = ''
         appName = $AppName
-        installerFileName = [System.IO.Path]::GetFileName($InstallerPath)
-        createdAt = (Get-Date).ToUniversalTime().ToString('o')
+        trialId = ''
+        issuedAt = (Get-Date).ToUniversalTime().ToString('o')
     }
 
     Write-AppGetterSandboxJson -Path (Join-Path $handshake 'status.json') -Object @{
@@ -2939,6 +2986,7 @@ function Start-AppGetterSandboxTrialSession {
         PackageDirectory = $package.PackageDirectory
         WsbPath = $wsbPath
         GuestScriptPath = $guestScriptPath
+        TrialCommandPath = (Join-Path $handshake 'trial-command.json')
         ResultPath = (Join-Path $handshake 'trial-result.json')
         StatusPath = (Join-Path $handshake 'status.json')
         HeartbeatPath = (Join-Path $handshake 'heartbeat.json')
@@ -2950,6 +2998,66 @@ function Start-AppGetterSandboxTrialSession {
         ProcessId = $processId
         StartedAt = Get-Date
     }
+}
+
+function Set-AppGetterSandboxTrialCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HandshakeDirectory,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('trial', 'shutdown', 'idle')]
+        [string]$Action,
+        [string]$Command = '',
+        [string]$AppName = '',
+        [string]$TrialId = ''
+    )
+
+    $path = Join-Path $HandshakeDirectory 'trial-command.json'
+    Write-AppGetterSandboxJson -Path $path -Object @{
+        action   = $Action
+        command  = $Command
+        appName  = $AppName
+        trialId  = $TrialId
+        issuedAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+}
+
+function Clear-AppGetterSandboxTrialResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HandshakeDirectory
+    )
+
+    $path = Join-Path $HandshakeDirectory 'trial-result.json'
+    if (Test-Path -LiteralPath $path) {
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Wait-AppGetterSandboxTrialReady {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HandshakeDirectory,
+        [int]$TimeoutSeconds = 120,
+        [int]$PollMilliseconds = 500
+    )
+
+    $deadline = (Get-Date).AddSeconds([Math]::Max(10, $TimeoutSeconds))
+    while ((Get-Date) -lt $deadline) {
+        $status = Get-AppGetterSandboxStatus -HandshakeDirectory $HandshakeDirectory
+        if ($status -and [string]$status.state -eq 'waiting') {
+            return $true
+        }
+
+        $heartbeat = Get-AppGetterSandboxHeartbeat -HandshakeDirectory $HandshakeDirectory
+        if ($heartbeat -and $heartbeat.alive) {
+            return $true
+        }
+
+        Start-Sleep -Milliseconds $PollMilliseconds
+    }
+
+    return $false
 }
 
 function Get-AppGetterSandboxTrialResult {
@@ -2972,6 +3080,7 @@ function Get-AppGetterSandboxTrialResult {
         Message = [string]$obj.message
         Command = [string]$obj.command
         AppName = [string]$obj.appName
+        TrialId = [string]$obj.trialId
         InstallEvidence = @($obj.installEvidence)
         TimedOut = [bool]$obj.timedOut
         KilledForUi = [bool]$obj.killedForUi
@@ -2985,6 +3094,7 @@ function Wait-AppGetterSandboxTrialResult {
     param(
         [Parameter(Mandatory = $true)]
         [string]$HandshakeDirectory,
+        [string]$TrialId = '',
         [int]$TimeoutSeconds = 900,
         [int]$PollMilliseconds = 1000
     )
@@ -2993,6 +3103,10 @@ function Wait-AppGetterSandboxTrialResult {
     while ((Get-Date) -lt $deadline) {
         $result = Get-AppGetterSandboxTrialResult -HandshakeDirectory $HandshakeDirectory
         if ($result) {
+            if ($TrialId -and $result.TrialId -and -not [string]::Equals($result.TrialId, $TrialId, [StringComparison]::OrdinalIgnoreCase)) {
+                Start-Sleep -Milliseconds $PollMilliseconds
+                continue
+            }
             return $result
         }
         Start-Sleep -Milliseconds $PollMilliseconds
@@ -3060,6 +3174,113 @@ function ConvertTo-AppGetterInstallerVerification {
     }
 }
 
+function Test-InstallerCommandsInSandbox {
+    <#
+    .SYNOPSIS
+        Runs multiple silent-install candidate commands inside one Windows Sandbox session.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerPath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Commands,
+        [string]$AppName = '',
+        [int]$TimeoutSeconds = 900,
+        [switch]$SkipLaunch
+    )
+
+    if (([System.Environment]::OSVersion.Platform -ne 'Win32NT') -and -not $SkipLaunch) {
+        return ,@(ConvertTo-AppGetterInstallerVerification -TrialResult $null `
+            -FallbackMessage 'Sandbox silent-switch trials require Windows and were skipped on this host.')
+    }
+
+    if (([System.Environment]::OSVersion.Platform -eq 'Win32NT') -and -not $SkipLaunch) {
+        $sandbox = Test-AppGetterWindowsSandbox
+        if (-not $sandbox.Enabled) {
+            return ,@(ConvertTo-AppGetterInstallerVerification -TrialResult $null `
+                -FallbackMessage ("Windows Sandbox is not available for silent-switch verification. {0}" -f $sandbox.Reason))
+        }
+    }
+
+    $commandList = @($Commands | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($commandList.Count -eq 0) {
+        return @()
+    }
+
+    $session = $null
+    try {
+        $session = Start-AppGetterSandboxTrialSession `
+            -InstallerPath $InstallerPath `
+            -AppName $AppName `
+            -SkipLaunch:$SkipLaunch
+
+        if ($SkipLaunch) {
+            return ,@([PSCustomObject]@{
+                    Verified = $false
+                    ExitCode = $null
+                    Message = 'Sandbox trial session prepared but not launched (SkipLaunch).'
+                    Observable = [PSCustomObject]@{
+                        SessionId = $session.SessionId
+                        HandshakeDirectory = $session.HandshakeDirectory
+                        PackageDirectory = $session.PackageDirectory
+                        WsbPath = $session.WsbPath
+                        Commands = $commandList
+                    }
+                    SilentUiDetected = $false
+                    InstallEvidence = @()
+                    Method = 'WindowsSandbox'
+                    Session = $session
+                })
+        }
+
+        if (-not (Wait-AppGetterSandboxTrialReady -HandshakeDirectory $session.HandshakeDirectory -TimeoutSeconds 120)) {
+            return ,@(ConvertTo-AppGetterInstallerVerification -TrialResult $null `
+                -FallbackMessage 'Sandbox trial guest did not become ready within 120 seconds.')
+        }
+
+        $results = New-Object System.Collections.Generic.List[object]
+        foreach ($command in $commandList) {
+            $trialId = [Guid]::NewGuid().ToString('N')
+            Clear-AppGetterSandboxTrialResult -HandshakeDirectory $session.HandshakeDirectory
+            Set-AppGetterSandboxTrialCommand `
+                -HandshakeDirectory $session.HandshakeDirectory `
+                -Action trial `
+                -Command $command `
+                -AppName $AppName `
+                -TrialId $trialId
+
+            Write-AppGetterLog -Message "Sandbox trial queued in shared session: $command" -Level Info
+            $trial = Wait-AppGetterSandboxTrialResult `
+                -HandshakeDirectory $session.HandshakeDirectory `
+                -TrialId $trialId `
+                -TimeoutSeconds $TimeoutSeconds
+            $verification = ConvertTo-AppGetterInstallerVerification -TrialResult $trial `
+                -FallbackMessage "Sandbox trial timed out after $TimeoutSeconds seconds without writing trial-result.json."
+            $verification | Add-Member -NotePropertyName Session -NotePropertyValue $session -Force
+            $verification | Add-Member -NotePropertyName TrialId -NotePropertyValue $trialId -Force
+            $results.Add($verification) | Out-Null
+
+            if ($verification.Verified) {
+                break
+            }
+        }
+
+        return @($results)
+    } catch {
+        return ,@(ConvertTo-AppGetterInstallerVerification -TrialResult $null `
+            -FallbackMessage ("Sandbox trial session failed: {0}" -f $_.Exception.Message))
+    } finally {
+        if ($session -and -not $SkipLaunch) {
+            try {
+                Set-AppGetterSandboxTrialCommand -HandshakeDirectory $session.HandshakeDirectory -Action shutdown
+                Start-Sleep -Seconds 2
+            } catch { }
+            Stop-AppGetterSandboxTrialSession -Session $session -Cleanup
+        }
+    }
+}
+
 function Test-InstallerCommandInSandbox {
     <#
     .SYNOPSIS
@@ -3076,60 +3297,19 @@ function Test-InstallerCommandInSandbox {
         [switch]$SkipLaunch
     )
 
-    # Allow SkipLaunch session preparation on any OS so unit tests can validate WSB/guest contracts.
-    if (([System.Environment]::OSVersion.Platform -ne 'Win32NT') -and -not $SkipLaunch) {
+    $results = Test-InstallerCommandsInSandbox `
+        -InstallerPath $InstallerPath `
+        -Commands @($Command) `
+        -AppName $AppName `
+        -TimeoutSeconds $TimeoutSeconds `
+        -SkipLaunch:$SkipLaunch
+
+    if ($results.Count -eq 0) {
         return ConvertTo-AppGetterInstallerVerification -TrialResult $null `
-            -FallbackMessage 'Sandbox silent-switch trials require Windows and were skipped on this host.'
+            -FallbackMessage 'Sandbox trial did not produce a result.'
     }
 
-    if (([System.Environment]::OSVersion.Platform -eq 'Win32NT') -and -not $SkipLaunch) {
-        $sandbox = Test-AppGetterWindowsSandbox
-        if (-not $sandbox.Enabled) {
-            return ConvertTo-AppGetterInstallerVerification -TrialResult $null `
-                -FallbackMessage ("Windows Sandbox is not available for silent-switch verification. {0}" -f $sandbox.Reason)
-        }
-    }
-
-    $session = $null
-    try {
-        $session = Start-AppGetterSandboxTrialSession `
-            -InstallerPath $InstallerPath `
-            -Command $Command `
-            -AppName $AppName `
-            -SkipLaunch:$SkipLaunch
-
-        if ($SkipLaunch) {
-            return [PSCustomObject]@{
-                Verified = $false
-                ExitCode = $null
-                Message = 'Sandbox trial session prepared but not launched (SkipLaunch).'
-                Observable = [PSCustomObject]@{
-                    SessionId = $session.SessionId
-                    HandshakeDirectory = $session.HandshakeDirectory
-                    PackageDirectory = $session.PackageDirectory
-                    WsbPath = $session.WsbPath
-                }
-                SilentUiDetected = $false
-                InstallEvidence = @()
-                Method = 'WindowsSandbox'
-                Session = $session
-            }
-        }
-
-        Write-AppGetterLog -Message "Sandbox trial started for command: $Command" -Level Info
-        $trial = Wait-AppGetterSandboxTrialResult -HandshakeDirectory $session.HandshakeDirectory -TimeoutSeconds $TimeoutSeconds
-        $verification = ConvertTo-AppGetterInstallerVerification -TrialResult $trial `
-            -FallbackMessage "Sandbox trial timed out after $TimeoutSeconds seconds without writing trial-result.json."
-        $verification | Add-Member -NotePropertyName Session -NotePropertyValue $session -Force
-        return $verification
-    } catch {
-        return ConvertTo-AppGetterInstallerVerification -TrialResult $null `
-            -FallbackMessage ("Sandbox trial failed to start: {0}" -f $_.Exception.Message)
-    } finally {
-        if ($session -and -not $SkipLaunch) {
-            Stop-AppGetterSandboxTrialSession -Session $session -Cleanup
-        }
-    }
+    return $results[0]
 }
 
 function Get-AppGetterLiveTestInstaller {
