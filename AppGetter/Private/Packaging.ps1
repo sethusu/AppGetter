@@ -13,6 +13,7 @@ function Invoke-AppGetterPackaging {
         [string]$OutputPath = (Get-AppGetterSettings).OutputPath,
         [string]$IconPath,
         [string]$InstallCommand,
+        [string]$InstallerArguments,
         [switch]$VerifySilentSwitches,
         [int]$MaxCandidatesToVerify = 3,
         [scriptblock]$OnProgress
@@ -107,7 +108,32 @@ function Invoke-AppGetterPackaging {
             -Message $installerFile.Name -OnProgress $OnProgress
 
         $switchDiscoveryResult = $null
-        if ([string]::IsNullOrWhiteSpace($InstallCommand)) {
+        if (-not [string]::IsNullOrWhiteSpace($InstallCommand)) {
+            $installerInstallCommand = $InstallCommand
+            Write-AppGetterLog -Message 'Using user-provided install command; silent switch discovery skipped.' -OnProgress $OnProgress
+        } elseif (-not [string]::IsNullOrWhiteSpace($InstallerArguments)) {
+            $installerInstallCommand = ConvertTo-AppGetterInstallCommand -InstallerFileName $installerFile.Name `
+                -Arguments $InstallerArguments
+            $switchDiscoveryResult = [PSCustomObject]@{
+                RecommendedCommand    = $installerInstallCommand
+                AlternativeCommands   = @()
+                ConfidenceScore       = 100
+                EvidenceSummary       = @("User-provided install arguments: $($InstallerArguments.Trim())")
+                NeedsManualReview     = $false
+                Verified              = $false
+                InstallerFamily       = 'user-provided'
+                PrimaryType           = $installerExtension.TrimStart('.')
+                InstallerHash         = $installerHash
+                UsedCache             = $false
+                Verification          = $null
+            }
+            Write-AppGetterLog -Message 'Using user-provided install arguments; silent switch discovery skipped.' -OnProgress $OnProgress
+            Write-AppGetterLog -Message "Selected install command: $installerInstallCommand" -OnProgress $OnProgress
+            if ($VerifySilentSwitches) {
+                Write-AppGetterLog -Message 'Sandbox switch verification skipped for user-provided arguments. Use Test in Sandbox to validate the package.' `
+                    -Level Warning -OnProgress $OnProgress
+            }
+        } else {
             if ($VerifySilentSwitches) {
                 Write-AppGetterLog -Message 'Silent switch Sandbox verification requested (-VerifySilentSwitches).' -OnProgress $OnProgress
             }
@@ -135,9 +161,6 @@ function Invoke-AppGetterPackaging {
             Write-AppGetterLog -Message "Silent install discovery: family=$($switchDiscoveryResult.InstallerFamily), confidence=$($switchDiscoveryResult.ConfidenceScore), $verifiedNote$cacheNote$reviewNote" `
                 -Level $(if ($switchDiscoveryResult.NeedsManualReview) { 'Warning' } else { 'Success' }) -OnProgress $OnProgress
             Write-AppGetterLog -Message "Selected install command: $installerInstallCommand" -OnProgress $OnProgress
-        } else {
-            $installerInstallCommand = $InstallCommand
-            Write-AppGetterLog -Message 'Using user-provided install command; silent switch discovery skipped.' -OnProgress $OnProgress
         }
 
         Write-AppGetterProgress -Step 7 -TotalSteps $totalSteps -StepName 'Generating install.ps1' -Percent 48 -OnProgress $OnProgress

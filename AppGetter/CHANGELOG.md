@@ -2,6 +2,11 @@
 
 ## Version 2.3.0 - Unreleased
 
+### Manual install arguments
+- New **Install arguments / silent switches** field in the GUI and `-InstallerArguments` CLI/`Invoke-AppGetterPackaging` parameter for entering your own silent switches (e.g. `/S /norestart`, `/qn PROPERTY=1`)
+- Arguments are combined with the installer file name once it is known (MSI installers are wrapped with `msiexec /i`); a full command such as `msiexec /i "setup.msi" /qn` is used as-is
+- When set, automatic silent switch discovery (and Sandbox candidate trials) are skipped, and the package metadata records the command as user-provided (`installerFamily: user-provided`, `verified: false`)
+
 ### Silent switch Sandbox research
 - Added Windows Sandbox **candidate trials** during discovery (`Test-InstallerCommandInSandbox`) that prove silence (no installer UI), accepted exit codes, and new ARP install evidence — not just post-package success
 - Packaging can force trials with `-VerifySilentSwitches` (CLI/GUI); trials also auto-run when static confidence is low/ambiguous and Sandbox is available

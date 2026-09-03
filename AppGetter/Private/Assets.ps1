@@ -41,6 +41,39 @@ function Get-InstallerInstallCommand {
     }
 }
 
+function ConvertTo-AppGetterInstallCommand {
+    <#
+    .SYNOPSIS
+        Builds a full install command from user-provided installer arguments.
+    .DESCRIPTION
+        Combines manually entered silent switches / arguments with the installer
+        file name. If the arguments already look like a complete command (they
+        mention the installer file or an executable such as msiexec), they are
+        used as-is. MSI installers are wrapped with msiexec /i.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerFileName,
+        [Parameter(Mandatory = $true)]
+        [string]$Arguments
+    )
+
+    $arguments = $Arguments.Trim()
+    $extension = [System.IO.Path]::GetExtension($InstallerFileName).ToLower()
+
+    # Full command entered (references the installer itself or an install engine).
+    if ($arguments -match [regex]::Escape($InstallerFileName) -or
+        $arguments -match '(?i)^\s*("|'')?\s*(msiexec|Add-AppxPackage)\b') {
+        return $arguments
+    }
+
+    if ($extension -eq '.msi') {
+        return "msiexec /i `"$InstallerFileName`" $arguments"
+    }
+
+    return "`"$InstallerFileName`" $arguments"
+}
+
 function Get-IntuneUninstallCommandLine {
     return '%windir%\sysnative\windowspowershell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1'
 }

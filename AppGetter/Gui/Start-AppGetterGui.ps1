@@ -316,7 +316,7 @@ function Start-AppGetterBackgroundPackaging {
             OutputPath = $PackArguments.OutputPath
             OnProgress = $onProgress
         }
-        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath')) {
+        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath', 'InstallerArguments')) {
             if ($PackArguments[$key]) { $params[$key] = $PackArguments[$key] }
         }
         if ($PackArguments.ContainsKey('VerifySilentSwitches') -and $PackArguments.VerifySilentSwitches) {
@@ -730,6 +730,7 @@ $browseInstallerButton = $window.FindName('BrowseInstallerButton')
 $developerUrlBox = $window.FindName('DeveloperUrlBox')
 $supportUrlBox = $window.FindName('SupportUrlBox')
 $versionBox = $window.FindName('VersionBox')
+$installArgumentsBox = $window.FindName('InstallArgumentsBox')
 $outputPathBox = $window.FindName('OutputPathBox')
 $browseOutputButton = $window.FindName('BrowseOutputButton')
 $verifySilentSwitchesCheckBox = $window.FindName('VerifySilentSwitchesCheckBox')
@@ -990,6 +991,7 @@ function Set-PackControlsEnabled {
     $developerUrlBox.IsEnabled = $Enabled
     $supportUrlBox.IsEnabled = $Enabled
     $versionBox.IsEnabled = $Enabled
+    $installArgumentsBox.IsEnabled = $Enabled
     $browseOutputButton.IsEnabled = $Enabled
     $browseIconButton.IsEnabled = $Enabled
     if ($verifySilentSwitchesCheckBox) {
@@ -1119,6 +1121,8 @@ function Start-AppGetterPackagingFromUi {
     $outputPathBox.Text = Get-AppGetterAppOutputPath -BasePath $script:baseOutputPath -PackageId $packageId
     Save-AppGetterSettings -OutputPath $script:baseOutputPath -PackageId $packageId
 
+    $installerArguments = $installArgumentsBox.Text.Trim()
+
     $packArguments = @{
         AppName       = $appName
         WebsiteUrl    = $websiteUrl
@@ -1130,11 +1134,15 @@ function Start-AppGetterPackagingFromUi {
         Publisher     = $publisherBox.Text.Trim()
         OutputPath    = $script:baseOutputPath
         IconPath      = $script:customIconPath
+        InstallerArguments = $installerArguments
         VerifySilentSwitches = [bool]($verifySilentSwitchesCheckBox -and $verifySilentSwitchesCheckBox.IsChecked)
     }
 
     $script:progressQueue = New-Object System.Collections.Concurrent.ConcurrentQueue[object]
     Add-LogLine -LogControl $logText -Message "Starting packaging for $appName..."
+    if ($installerArguments) {
+        Add-LogLine -LogControl $logText -Message "Using manual install arguments: $installerArguments"
+    }
 
     $script:packWorker = Start-AppGetterBackgroundPackaging -PackArguments $packArguments -ProgressQueue $script:progressQueue
 
