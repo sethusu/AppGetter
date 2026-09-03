@@ -50,6 +50,8 @@
         'Test-AppGetterAcceptedInstallExitCode'
         'Resolve-InstallerInstallCommand'
         'Get-InstallerFingerprint'
+        'Get-AppGetterLicenseCatalog'
+        'Resolve-AppGetterLicensePattern'
     )
     PrivateData       = @{
         PSData = @{

@@ -23,6 +23,7 @@ For each application, AppGetter produces:
 | `README.md` | Copy/paste reference for every Intune portal field |
 | `logo.png` / `icon.png` | App icon for Intune upload |
 | `app.json` / `win32LobApp.json` | Metadata exports |
+| `license.json` | Identified ServiceNow licensing pattern and applied packaging rules |
 | `validation.json` | Written after a successful Test in Sandbox run |
 | `silent-switches.json` | Silent-switch discovery result (command, confidence, verified flag) |
 | `sandbox-test-report.txt` | Chat-ready sandbox log (after Test in Sandbox) |
@@ -63,7 +64,7 @@ Or launch the GUI directly:
 .\Gui\Start-AppGetterGui.ps1
 ```
 
-3. Enter the **application name** and one of: a **website URL** (to scan for download links), a **direct download URL**, or a **local installer file** (Browse...).
+3. Enter the **application name** and one of: a **website URL** (to scan for download links), a **direct download URL**, or a **local installer file** (Browse...). Optionally paste the ServiceNow **license info** (license metric/type); AppGetter identifies the pattern and applies it.
 4. Choose an **output folder** — each app gets its own subfolder (default: `Documents\AppGetter\{App}`).
 5. Click **Create Package** and watch the live progress steps (the window stays responsive while packaging runs in the background).
 6. Optionally click **Test in Sandbox** to confirm install, detection, and uninstall inside Windows Sandbox before uploading to Intune.
@@ -120,6 +121,10 @@ cd AppGetter
 .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/setup.exe" -AppName "MyApp" `
     -OutputPath "C:\IntunePackages" `
     -IconPath "C:\Icons\myapp.png"
+
+# Apply a ServiceNow license metric (Per Device, Per User, Freeware, ...)
+.\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/setup.exe" -AppName "MyApp" `
+    -LicenseInfo "Per Device"
 ```
 
 ---
@@ -149,6 +154,7 @@ Documents\AppGetter\
         ├── README.md                 ← Intune upload cheat sheet
         ├── readme.txt
         ├── app.json
+        ├── license.json
         ├── win32LobApp.json
         ├── icon.png
         └── ..\simion-setup.intunewin
@@ -170,6 +176,7 @@ Default output path and last-used settings are saved to:
 | **AppName** | Application display name |
 | **Version** | Optional version (auto-detected from website if omitted) |
 | **Publisher** | Publisher name |
+| **LicenseInfo** | ServiceNow license metric/type (Per Device, Per User, Freeware, Subscription, ...). Identifies the pattern and applies install context, assignment notes, and license-key handling |
 | **DeveloperUrl** | Optional developer site for logo/description lookup |
 | **SupportUrl** | Optional docs page for silent install switch discovery |
 | **OutputPath** | Base output directory |

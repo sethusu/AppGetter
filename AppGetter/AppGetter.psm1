@@ -3,6 +3,7 @@ $privateScripts = @(
     'Settings.ps1'
     'Assets.ps1'
     'Web.ps1'
+    'LicenseDiscovery.ps1'
     'SwitchDiscovery.ps1'
     'IconResolution.ps1'
     'Scripts.ps1'
@@ -61,4 +62,6 @@ Export-ModuleMember -Function @(
     'Test-AppGetterAcceptedInstallExitCode'
     'Resolve-InstallerInstallCommand'
     'Get-InstallerFingerprint'
+    'Get-AppGetterLicenseCatalog'
+    'Resolve-AppGetterLicensePattern'
 )

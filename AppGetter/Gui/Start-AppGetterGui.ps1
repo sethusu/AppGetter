@@ -316,7 +316,7 @@ function Start-AppGetterBackgroundPackaging {
             OutputPath = $PackArguments.OutputPath
             OnProgress = $onProgress
         }
-        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath')) {
+        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'LicenseInfo', 'IconPath')) {
             if ($PackArguments[$key]) { $params[$key] = $PackArguments[$key] }
         }
         if ($PackArguments.ContainsKey('VerifySilentSwitches') -and $PackArguments.VerifySilentSwitches) {
@@ -723,6 +723,7 @@ $prereqText = $window.FindName('PrereqStatusText')
 $installContentPrepButton = $window.FindName('InstallContentPrepButton')
 $appNameBox = $window.FindName('AppNameBox')
 $publisherBox = $window.FindName('PublisherBox')
+$licenseInfoBox = $window.FindName('LicenseInfoBox')
 $websiteUrlBox = $window.FindName('WebsiteUrlBox')
 $downloadUrlBox = $window.FindName('DownloadUrlBox')
 $installerPathBox = $window.FindName('InstallerPathBox')
@@ -765,6 +766,15 @@ $appNameBox.Text = $settings.LastAppName
 $websiteUrlBox.Text = $settings.LastWebsiteUrl
 $downloadUrlBox.Text = $settings.LastDownloadUrl
 $installerPathBox.Text = $settings.LastInstallerPath
+if ($licenseInfoBox) {
+    $licenseInfoBox.Items.Add('') | Out-Null
+    foreach ($licenseItem in Get-AppGetterLicenseCatalog) {
+        $licenseInfoBox.Items.Add($licenseItem.DisplayName) | Out-Null
+    }
+    if ($settings.LastLicenseInfo) {
+        $licenseInfoBox.Text = $settings.LastLicenseInfo
+    }
+}
 Initialize-StepList -ListControl $stepList
 
 function Update-OutputPathForApp {
@@ -983,6 +993,9 @@ function Set-PackControlsEnabled {
     $packButton.IsEnabled = $Enabled
     $appNameBox.IsEnabled = $Enabled
     $publisherBox.IsEnabled = $Enabled
+    if ($licenseInfoBox) {
+        $licenseInfoBox.IsEnabled = $Enabled
+    }
     $websiteUrlBox.IsEnabled = $Enabled
     $downloadUrlBox.IsEnabled = $Enabled
     $installerPathBox.IsEnabled = $Enabled
@@ -1128,6 +1141,7 @@ function Start-AppGetterPackagingFromUi {
         SupportUrl    = $supportUrlBox.Text.Trim()
         Version       = $versionBox.Text.Trim()
         Publisher     = $publisherBox.Text.Trim()
+        LicenseInfo   = if ($licenseInfoBox) { $licenseInfoBox.Text.Trim() } else { '' }
         OutputPath    = $script:baseOutputPath
         IconPath      = $script:customIconPath
         VerifySilentSwitches = [bool]($verifySilentSwitchesCheckBox -and $verifySilentSwitchesCheckBox.IsChecked)

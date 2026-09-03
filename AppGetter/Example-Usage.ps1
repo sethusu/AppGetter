@@ -37,6 +37,13 @@ Write-Host "`nExample 5: Custom output path" -ForegroundColor Cyan
 #     -AppName "MyApp" `
 #     -OutputPath "C:\IntunePackages"
 
+# Example 5b: ServiceNow license metric applied during packaging
+Write-Host "`nExample 5b: ServiceNow license info" -ForegroundColor Cyan
+# .\Create-IntuneWinFromWeb.ps1 `
+#     -DownloadUrl "https://example.com/setup.exe" `
+#     -AppName "MyApp" `
+#     -LicenseInfo "Per Device"
+
 # Example 6: PowerShell module (advanced)
 Write-Host "`nExample 6: Module usage" -ForegroundColor Cyan
 # Import-Module .\AppGetter.psd1
