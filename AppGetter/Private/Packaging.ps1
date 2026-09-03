@@ -8,6 +8,7 @@ function Invoke-AppGetterPackaging {
         [string]$InstallerPath,
         [string]$DeveloperUrl,
         [string]$SupportUrl,
+        [string]$LicensingInfo,
         [string]$Version,
         [string]$Publisher,
         [string]$OutputPath = (Get-AppGetterSettings).OutputPath,
@@ -28,7 +29,8 @@ function Invoke-AppGetterPackaging {
             -Message "Preparing $AppName" -OnProgress $OnProgress
 
         $details = Get-WebPackageDetails -AppName $AppName -WebsiteUrl $WebsiteUrl -DownloadUrl $DownloadUrl `
-            -DeveloperUrl $DeveloperUrl -SupportUrl $SupportUrl -Version $Version -Publisher $Publisher
+            -DeveloperUrl $DeveloperUrl -SupportUrl $SupportUrl -Version $Version -Publisher $Publisher `
+            -LicensingInfo $LicensingInfo
 
         if (-not [string]::IsNullOrWhiteSpace($InstallerPath) -and $details.Description -like '*Downloaded from web') {
             $details.Description = $details.Description -replace 'Downloaded from web$', 'Packaged from local installer'

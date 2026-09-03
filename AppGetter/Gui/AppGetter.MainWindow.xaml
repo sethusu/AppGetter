@@ -56,6 +56,8 @@
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0" Grid.Column="0" Text="Application Name *" FontWeight="SemiBold" Margin="0,0,8,6"/>
@@ -91,14 +93,18 @@
                    ToolTip="Optional. Leave blank to auto-detect or use 'latest'."/>
         </StackPanel>
 
-        <TextBlock Grid.Row="8" Grid.Column="0" Text="Output destination" FontWeight="SemiBold" Margin="0,6,8,6" VerticalAlignment="Top"/>
-        <DockPanel Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,28,0,0" LastChildFill="True">
+        <TextBlock Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2" Text="Licensing info (optional)" FontWeight="SemiBold" Margin="0,0,0,6"/>
+        <TextBox Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="2" x:Name="LicensingInfoBox" Height="30" VerticalContentAlignment="Center" Margin="0,0,0,8"
+                 ToolTip="Paste licensing details from intake systems (for example: named user, subscription, perpetual)."/>
+
+        <TextBlock Grid.Row="10" Grid.Column="0" Text="Output destination" FontWeight="SemiBold" Margin="0,6,8,6" VerticalAlignment="Top"/>
+        <DockPanel Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,28,0,0" LastChildFill="True">
           <Button x:Name="BrowseOutputButton" Content="Browse..." Width="90" Height="30" DockPanel.Dock="Right" Margin="8,0,0,0"/>
           <TextBox x:Name="OutputPathBox" Height="30" VerticalContentAlignment="Center"
                    ToolTip="Base output folder. Each app gets its own subfolder."/>
         </DockPanel>
 
-        <CheckBox Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="2" x:Name="VerifySilentSwitchesCheckBox"
+        <CheckBox Grid.Row="11" Grid.Column="0" Grid.ColumnSpan="2" x:Name="VerifySilentSwitchesCheckBox"
                   Content="Verify silent install switches in Windows Sandbox (tries ranked candidates)"
                   Margin="0,12,0,0"
                   ToolTip="When checked, AppGetter trials top silent-switch candidates in Windows Sandbox during packaging. Also auto-runs when static confidence is low and Sandbox is available."/>
