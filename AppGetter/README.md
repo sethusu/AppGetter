@@ -65,9 +65,10 @@ Or launch the GUI directly:
 
 3. Enter the **application name** and one of: a **website URL** (to scan for download links), a **direct download URL**, or a **local installer file** (Browse...).
 4. Choose an **output folder** — each app gets its own subfolder (default: `Documents\AppGetter\{App}`).
-5. Click **Create Package** and watch the live progress steps (the window stays responsive while packaging runs in the background).
-6. Optionally click **Test in Sandbox** to confirm install, detection, and uninstall inside Windows Sandbox before uploading to Intune.
-7. Open the output folder and upload the `.intunewin` to Intune using the included `README.md` as your field guide.
+5. Optionally set the **License type** (e.g. the value from your ServiceNow licensing field) and **License notes** — leave the type blank to let AppGetter identify the licensing pattern from the app's web pages.
+6. Click **Create Package** and watch the live progress steps (the window stays responsive while packaging runs in the background).
+7. Optionally click **Test in Sandbox** to confirm install, detection, and uninstall inside Windows Sandbox before uploading to Intune.
+8. Open the output folder and upload the `.intunewin` to Intune using the included `README.md` as your field guide.
 
 If the Content Prep Tool is missing, the header shows an **Install Content Prep** button that installs `intunewinapputil` via winget.
 
@@ -115,6 +116,9 @@ cd AppGetter
 
 # Package an installer already on this computer
 .\Create-IntuneWinFromWeb.ps1 -InstallerPath "C:\Installers\setup.exe" -AppName "MyApp" -Version "1.0.0"
+
+# Apply the licensing pattern from your ServiceNow field (auto-detected from web pages if omitted)
+.\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/installer.msi" -AppName "MyApp" -LicenseType "Per User"
 
 # Custom output path and icon
 .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/setup.exe" -AppName "MyApp" `
@@ -170,6 +174,10 @@ Default output path and last-used settings are saved to:
 | **AppName** | Application display name |
 | **Version** | Optional version (auto-detected from website if omitted) |
 | **Publisher** | Publisher name |
+| **LicenseType** | Licensing pattern, e.g. the ServiceNow licensing field value (Per User, Per Device, Site License, Subscription, Freeware, Open Source, Trial / Evaluation). Auto-detected from the app's web pages if omitted |
+| **LicenseName** | Optional specific license name (e.g. "MIT License") |
+| **LicenseUrl** | Optional license/EULA page URL (auto-discovered if omitted) |
+| **LicenseNotes** | Optional free-form licensing notes (contract number, entitlement...) |
 | **DeveloperUrl** | Optional developer site for logo/description lookup |
 | **SupportUrl** | Optional docs page for silent install switch discovery |
 | **OutputPath** | Base output directory |
