@@ -1,8 +1,9 @@
 # Cloud Agent base image for the AppGetter PowerShell tool.
 # AppGetter is a PowerShell (pwsh) CLI/GUI tool, so the base image must provide
-# PowerShell Core. Cursor's default image does not, so we install it here (a
-# stable system toolchain). Repository-tied PowerShell modules are installed by
-# .cursor/install.sh after checkout.
+# PowerShell Core plus the modules used for linting (PSScriptAnalyzer) and the
+# test suite (Pester 5+). Cursor's default image provides none of these, so we
+# install them here as stable, image-layer-baked dependencies. .cursor/install.sh
+# then runs after checkout as an idempotent safety net.
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -27,6 +28,11 @@ RUN wget -q "https://packages.microsoft.com/config/ubuntu/24.04/packages-microso
     && apt-get install -y --no-install-recommends powershell \
     && rm -rf /var/lib/apt/lists/* \
     && pwsh --version
+
+# Install the PowerShell modules AppGetter needs for lint and tests into the
+# system-wide (AllUsers) module path so they are baked into the image layer.
+# ErrorActionPreference=Stop makes a gallery/install failure abort the build.
+RUN pwsh -NoProfile -Command "\$ErrorActionPreference='Stop'; Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; Install-Module -Name PSScriptAnalyzer -MinimumVersion 1.21.0 -Scope AllUsers -Force; Install-Module -Name Pester -MinimumVersion 5.0.0 -Scope AllUsers -Force -SkipPublisherCheck; Get-Module -ListAvailable -Name PSScriptAnalyzer,Pester | Format-Table Name,Version"
 
 # The ubuntu:24.04 image ships a non-root 'ubuntu' user (uid 1000); run as it.
 USER ubuntu
