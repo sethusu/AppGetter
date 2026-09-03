@@ -316,7 +316,7 @@ function Start-AppGetterBackgroundPackaging {
             OutputPath = $PackArguments.OutputPath
             OnProgress = $onProgress
         }
-        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath')) {
+        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath', 'InstallCommand', 'ManualSilentSwitches', 'ManualInstallArguments')) {
             if ($PackArguments[$key]) { $params[$key] = $PackArguments[$key] }
         }
         if ($PackArguments.ContainsKey('VerifySilentSwitches') -and $PackArguments.VerifySilentSwitches) {
@@ -730,6 +730,8 @@ $browseInstallerButton = $window.FindName('BrowseInstallerButton')
 $developerUrlBox = $window.FindName('DeveloperUrlBox')
 $supportUrlBox = $window.FindName('SupportUrlBox')
 $versionBox = $window.FindName('VersionBox')
+$manualSilentSwitchesBox = $window.FindName('ManualSilentSwitchesBox')
+$manualInstallArgsBox = $window.FindName('ManualInstallArgsBox')
 $outputPathBox = $window.FindName('OutputPathBox')
 $browseOutputButton = $window.FindName('BrowseOutputButton')
 $verifySilentSwitchesCheckBox = $window.FindName('VerifySilentSwitchesCheckBox')
@@ -990,6 +992,8 @@ function Set-PackControlsEnabled {
     $developerUrlBox.IsEnabled = $Enabled
     $supportUrlBox.IsEnabled = $Enabled
     $versionBox.IsEnabled = $Enabled
+    $manualSilentSwitchesBox.IsEnabled = $Enabled
+    $manualInstallArgsBox.IsEnabled = $Enabled
     $browseOutputButton.IsEnabled = $Enabled
     $browseIconButton.IsEnabled = $Enabled
     if ($verifySilentSwitchesCheckBox) {
@@ -1086,6 +1090,8 @@ function Start-AppGetterPackagingFromUi {
     $websiteUrl = $websiteUrlBox.Text.Trim()
     $downloadUrl = $downloadUrlBox.Text.Trim()
     $installerPath = $installerPathBox.Text.Trim()
+    $manualSilentSwitches = $manualSilentSwitchesBox.Text.Trim()
+    $manualInstallArguments = $manualInstallArgsBox.Text.Trim()
 
     if ([string]::IsNullOrWhiteSpace($appName)) {
         [System.Windows.MessageBox]::Show($window, 'Application name is required.', 'AppGetter', 'OK', 'Warning') | Out-Null
@@ -1130,11 +1136,16 @@ function Start-AppGetterPackagingFromUi {
         Publisher     = $publisherBox.Text.Trim()
         OutputPath    = $script:baseOutputPath
         IconPath      = $script:customIconPath
+        ManualSilentSwitches = $manualSilentSwitches
+        ManualInstallArguments = $manualInstallArguments
         VerifySilentSwitches = [bool]($verifySilentSwitchesCheckBox -and $verifySilentSwitchesCheckBox.IsChecked)
     }
 
     $script:progressQueue = New-Object System.Collections.Concurrent.ConcurrentQueue[object]
     Add-LogLine -LogControl $logText -Message "Starting packaging for $appName..."
+    if ($manualSilentSwitches -or $manualInstallArguments) {
+        Add-LogLine -LogControl $logText -Message 'Using manual install switches/arguments from GUI; silent switch discovery will be skipped.'
+    }
 
     $script:packWorker = Start-AppGetterBackgroundPackaging -PackArguments $packArguments -ProgressQueue $script:progressQueue
 

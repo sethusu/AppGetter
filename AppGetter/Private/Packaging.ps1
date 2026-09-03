@@ -13,6 +13,8 @@ function Invoke-AppGetterPackaging {
         [string]$OutputPath = (Get-AppGetterSettings).OutputPath,
         [string]$IconPath,
         [string]$InstallCommand,
+        [string]$ManualSilentSwitches,
+        [string]$ManualInstallArguments,
         [switch]$VerifySilentSwitches,
         [int]$MaxCandidatesToVerify = 3,
         [scriptblock]$OnProgress
@@ -107,7 +109,31 @@ function Invoke-AppGetterPackaging {
             -Message $installerFile.Name -OnProgress $OnProgress
 
         $switchDiscoveryResult = $null
-        if ([string]::IsNullOrWhiteSpace($InstallCommand)) {
+        $manualSilentSwitches = if ([string]::IsNullOrWhiteSpace($ManualSilentSwitches)) { '' } else { $ManualSilentSwitches.Trim() }
+        $manualInstallArguments = if ([string]::IsNullOrWhiteSpace($ManualInstallArguments)) { '' } else { $ManualInstallArguments.Trim() }
+        $manualArgumentSegments = @()
+        if ($manualSilentSwitches) { $manualArgumentSegments += $manualSilentSwitches }
+        if ($manualInstallArguments) { $manualArgumentSegments += $manualInstallArguments }
+        $manualArgumentText = ($manualArgumentSegments -join ' ').Trim()
+
+        if ([string]::IsNullOrWhiteSpace($InstallCommand) -and $manualArgumentText) {
+            switch ($installerExtension) {
+                '.msi' {
+                    $installerInstallCommand = "msiexec /i `"$installerFileName`" $manualArgumentText".Trim()
+                }
+                '.msix' {
+                    $installerInstallCommand = "Add-AppxPackage -Path `"$installerFileName`" $manualArgumentText".Trim()
+                }
+                '.appx' {
+                    $installerInstallCommand = "Add-AppxPackage -Path `"$installerFileName`" $manualArgumentText".Trim()
+                }
+                default {
+                    $installerInstallCommand = "`"$installerFileName`" $manualArgumentText".Trim()
+                }
+            }
+            Write-AppGetterLog -Message 'Using user-provided manual install switches/arguments; silent switch discovery skipped.' -OnProgress $OnProgress
+            Write-AppGetterLog -Message "Selected install command: $installerInstallCommand" -OnProgress $OnProgress
+        } elseif ([string]::IsNullOrWhiteSpace($InstallCommand)) {
             if ($VerifySilentSwitches) {
                 Write-AppGetterLog -Message 'Silent switch Sandbox verification requested (-VerifySilentSwitches).' -OnProgress $OnProgress
             }
