@@ -164,16 +164,19 @@ Describe 'Sandbox trial session contract' {
         try {
             $session = Start-AppGetterSandboxTrialSession `
                 -InstallerPath $installer `
-                -Command '"inno-setup.exe" /VERYSILENT /SUPPRESSMSGBOXES' `
                 -AppName 'Inno Sample' `
                 -SkipLaunch
             $session.Launched | Should -Be $false
             Test-Path -LiteralPath $session.WsbPath | Should -Be $true
             Test-Path -LiteralPath $session.GuestScriptPath | Should -Be $true
+            Test-Path -LiteralPath $session.TrialCommandPath | Should -Be $true
             (Get-Content -LiteralPath $session.GuestScriptPath -Raw) | Should -Match 'trial-result.json'
+            (Get-Content -LiteralPath $session.GuestScriptPath -Raw) | Should -Match 'trial-command.json'
             (Get-Content -LiteralPath $session.GuestScriptPath -Raw) | Should -Match 'interactive window'
             (Get-Content -LiteralPath $session.GuestScriptPath -Raw) | Should -Match 'Uninstall'
             (Get-Content -LiteralPath $session.WsbPath -Raw) | Should -Match 'Start-AppGetterSandboxTrialGuest.ps1'
+            $trialCommand = Get-Content -LiteralPath $session.TrialCommandPath -Raw | ConvertFrom-Json
+            $trialCommand.action | Should -Be 'idle'
         } finally {
             if ($session) {
                 Stop-AppGetterSandboxTrialSession -Session $session -Cleanup
@@ -200,6 +203,22 @@ Describe 'Sandbox trial session contract' {
         $result.Method | Should -Be 'WindowsSandbox'
         $result.Session | Should -Not -BeNullOrEmpty
         Stop-AppGetterSandboxTrialSession -Session $result.Session -Cleanup
+    }
+
+    It 'SkipLaunch batch trial verification prepares one shared session for multiple commands' {
+        $installer = Join-Path $script:fixtureRoot 'wixburn-setup.exe'
+        $results = Test-InstallerCommandsInSandbox `
+            -InstallerPath $installer `
+            -Commands @(
+                '"wixburn-setup.exe" /quiet /norestart'
+                '"wixburn-setup.exe" /passive /norestart'
+            ) `
+            -AppName 'Burn Sample' `
+            -SkipLaunch
+        $results.Count | Should -Be 1
+        $results[0].Session | Should -Not -BeNullOrEmpty
+        $results[0].Observable.Commands.Count | Should -Be 2
+        Stop-AppGetterSandboxTrialSession -Session $results[0].Session -Cleanup
     }
 }
 

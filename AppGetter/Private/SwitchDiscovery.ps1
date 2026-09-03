@@ -629,14 +629,19 @@ function Resolve-InstallerInstallCommand {
     if ($recommended -and $shouldVerify) {
         $maxTry = [Math]::Max(1, [int]$MaxCandidatesToVerify)
         $toTry = @($candidateArray | Select-Object -First $maxTry)
-        foreach ($candidate in $toTry) {
-            Write-AppGetterLog -Message "Sandbox-verifying silent candidate: $($candidate.Command)" -Level Info
-            $attempt = Test-InstallerCommand `
-                -InstallerPath $InstallerPath `
-                -Command $candidate.Command `
-                -AppName $AppName `
-                -AllowSandboxVerification `
-                -TimeoutSeconds $TimeoutSeconds
+        $commands = @($toTry | ForEach-Object { [string]$_.Command })
+        $batchResults = Test-InstallerCommandsInSandbox `
+            -InstallerPath $InstallerPath `
+            -Commands $commands `
+            -AppName $AppName `
+            -TimeoutSeconds $TimeoutSeconds
+
+        for ($i = 0; $i -lt $batchResults.Count; $i++) {
+            $candidate = $toTry[$i]
+            $attempt = $batchResults[$i]
+            if (-not $candidate) { continue }
+
+            Write-AppGetterLog -Message "Sandbox-verified silent candidate result: $($candidate.Command)" -Level Info
             $verificationAttempts += ,[PSCustomObject]@{
                 Command = $candidate.Command
                 Source = $candidate.Source

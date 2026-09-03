@@ -4,6 +4,7 @@
 
 ### Silent switch Sandbox research
 - Added Windows Sandbox **candidate trials** during discovery (`Test-InstallerCommandInSandbox`) that prove silence (no installer UI), accepted exit codes, and new ARP install evidence — not just post-package success
+- **Single Sandbox session for candidate retries**: ranked switch candidates are now tried in one Windows Sandbox VM (`Test-InstallerCommandsInSandbox`) — try, pass/fail, then try the next candidate without rebooting a new Sandbox per attempt
 - Packaging can force trials with `-VerifySilentSwitches` (CLI/GUI); trials also auto-run when static confidence is low/ambiguous and Sandbox is available
 - SHA-256 silent-switch cache under `%AppData%\AppGetter\silent-switch-cache.json`
 - Writes `silent-switches.json` next to each package; optional winget catalog hints as candidates
