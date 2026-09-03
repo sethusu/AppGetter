@@ -13,17 +13,28 @@ function Invoke-AppGetterPackaging {
         [string]$OutputPath = (Get-AppGetterSettings).OutputPath,
         [string]$IconPath,
         [string]$InstallCommand,
+        [string]$LicenseInfo,
+        [string]$LicenseType,
+        [string]$LicenseKey,
+        [string]$LicenseServer,
+        [string]$LicenseServerVariable,
+        [string]$LicenseFilePath,
+        [string]$LicenseFileTargetPath,
         [switch]$VerifySilentSwitches,
         [int]$MaxCandidatesToVerify = 3,
         [scriptblock]$OnProgress
     )
 
-    $totalSteps = 13
+    $totalSteps = 14
     $versionDirectory = $null
     $failureLogPath = $null
     $intunewinFile = $null
 
     try {
+        if (-not [string]::IsNullOrWhiteSpace($LicenseFilePath) -and -not (Test-Path -LiteralPath $LicenseFilePath -PathType Leaf)) {
+            throw "License file not found: $LicenseFilePath"
+        }
+
         Write-AppGetterProgress -Step 1 -TotalSteps $totalSteps -StepName 'Loading package details' -Percent 5 `
             -Message "Preparing $AppName" -OnProgress $OnProgress
 
@@ -140,39 +151,92 @@ function Invoke-AppGetterPackaging {
             Write-AppGetterLog -Message 'Using user-provided install command; silent switch discovery skipped.' -OnProgress $OnProgress
         }
 
-        Write-AppGetterProgress -Step 7 -TotalSteps $totalSteps -StepName 'Generating install.ps1' -Percent 48 -OnProgress $OnProgress
-        $installScript = New-AppGetterInstallScript -PackageId $details.PackageId -DisplayName $details.DisplayName `
-            -Version $details.Version -InstallCommand $installerInstallCommand
+        Write-AppGetterProgress -Step 7 -TotalSteps $totalSteps -StepName 'Identifying licensing pattern' -Percent 45 `
+            -Message $(if ($LicenseInfo -or $LicenseType) { 'Classifying the licensing field' } else { 'No licensing field supplied' }) `
+            -OnProgress $OnProgress
 
-        Write-AppGetterProgress -Step 8 -TotalSteps $totalSteps -StepName 'Generating detection.ps1' -Percent 58 -OnProgress $OnProgress
+        $licensingParams = @{
+            LicenseInfo           = $LicenseInfo
+            LicenseType           = $LicenseType
+            LicenseKey            = $LicenseKey
+            LicenseServer         = $LicenseServer
+            LicenseServerVariable = $LicenseServerVariable
+            LicenseFilePath       = $LicenseFilePath
+            LicenseFileTargetPath = $LicenseFileTargetPath
+            InstallerPath         = $installerFile.FullName
+        }
+        if ($switchDiscoveryResult -and $switchDiscoveryResult.Fingerprint) {
+            # Reuse the fingerprint switch discovery already produced instead of re-reading the installer.
+            $licensingParams.Fingerprint = $switchDiscoveryResult.Fingerprint
+        }
+        $licensing = Resolve-AppGetterLicensing @licensingParams
+
+        if (-not [string]::IsNullOrWhiteSpace($LicenseFilePath)) {
+            $licensing.PackagedLicenseFile = Copy-AppGetterLicenseArtifact -LicenseFilePath $LicenseFilePath `
+                -VersionDirectory $versionDirectory
+            Write-AppGetterLog -Message "Staged license file in package: $($licensing.PackagedLicenseFile)" `
+                -Level Success -OnProgress $OnProgress
+        }
+
+        if ($licensing.HasLicenseKey) {
+            $licenseArgument = Add-AppGetterLicenseInstallArgument -InstallCommand $installerInstallCommand `
+                -InstallerFamily $(if ($switchDiscoveryResult) { $switchDiscoveryResult.InstallerFamily } else { '' }) `
+                -PropertyName $licensing.LicenseKeyPropertyName -LicenseKey $licensing.LicenseKey
+            if ($licenseArgument.Applied) {
+                $installerInstallCommand = $licenseArgument.InstallCommand
+                $licensing.AppliedToInstallCommand = $true
+            }
+            Write-AppGetterLog -Message "Licensing: $($licenseArgument.Reason)" `
+                -Level $(if ($licenseArgument.Applied) { 'Success' } else { 'Warning' }) -OnProgress $OnProgress
+        }
+
+        Write-AppGetterLog -Message (Get-AppGetterLicensingSummary -Licensing $licensing) `
+            -Level $(if ($licensing.Classified -and -not $licensing.NeedsManualReview) { 'Success' } else { 'Warning' }) `
+            -OnProgress $OnProgress
+        foreach ($complianceNote in @($licensing.ComplianceNotes)) {
+            Write-AppGetterLog -Message "Licensing note: $complianceNote" -Level Warning -OnProgress $OnProgress
+        }
+
+        Write-AppGetterProgress -Step 8 -TotalSteps $totalSteps -StepName 'Generating install.ps1' -Percent 52 -OnProgress $OnProgress
+        $licensingStage = New-AppGetterLicenseInstallStage -Licensing $licensing
+        $redactValues = @()
+        if ($licensing.AppliedToInstallCommand -and $licensing.LicenseKey) {
+            $redactValues = @($licensing.LicenseKey)
+        }
+        $installScript = New-AppGetterInstallScript -PackageId $details.PackageId -DisplayName $details.DisplayName `
+            -Version $details.Version -InstallCommand $installerInstallCommand `
+            -LicensingStage $licensingStage -RedactValues $redactValues
+
+        Write-AppGetterProgress -Step 9 -TotalSteps $totalSteps -StepName 'Generating detection.ps1' -Percent 60 -OnProgress $OnProgress
         $detectionScript = New-AppGetterDetectionScript -PackageId $details.PackageId -DisplayName $details.DisplayName `
             -Version $details.Version
 
-        Write-AppGetterProgress -Step 9 -TotalSteps $totalSteps -StepName 'Generating uninstall.ps1' -Percent 68 -OnProgress $OnProgress
+        Write-AppGetterProgress -Step 10 -TotalSteps $totalSteps -StepName 'Generating uninstall.ps1' -Percent 68 -OnProgress $OnProgress
         $uninstallScript = New-AppGetterUninstallScript -PackageId $details.PackageId -DisplayName $details.DisplayName
 
-        Write-AppGetterProgress -Step 10 -TotalSteps $totalSteps -StepName 'Resolving icon' -Percent 75 -OnProgress $OnProgress
+        Write-AppGetterProgress -Step 11 -TotalSteps $totalSteps -StepName 'Resolving icon' -Percent 75 -OnProgress $OnProgress
         $iconFilePath = Join-Path $versionDirectory 'icon.png'
         $logoFilePath = Join-Path $appDirectory 'logo.png'
         $hasIcon = Resolve-PackageIcon -WebsiteUrl $WebsiteUrl -DeveloperUrl $DeveloperUrl -AppName $AppName `
             -LogoFilePath $logoFilePath -IconFilePath $iconFilePath -IconPath $IconPath `
             -InstallerPath $installerFile.FullName -OnProgress $OnProgress
 
-        Write-AppGetterProgress -Step 11 -TotalSteps $totalSteps -StepName 'Writing metadata' -Percent 83 -OnProgress $OnProgress
+        Write-AppGetterProgress -Step 12 -TotalSteps $totalSteps -StepName 'Writing metadata' -Percent 83 -OnProgress $OnProgress
         $metadata = New-AppGetterMetadataFiles -PackageDetails $details -VersionDirectory $versionDirectory `
             -InstallerFileName $installerFile.Name -InstallerHash $installerHash `
             -InstallerInstallCommand $installerInstallCommand -DetectionScript $detectionScript `
             -InstallScript $installScript -UninstallScript $uninstallScript -IconFilePath $iconFilePath `
-            -FinalDownloadUrl $finalDownloadUrl -SwitchDiscoveryResult $switchDiscoveryResult
+            -FinalDownloadUrl $finalDownloadUrl -SwitchDiscoveryResult $switchDiscoveryResult `
+            -Licensing $licensing
 
-        Write-AppGetterProgress -Step 12 -TotalSteps $totalSteps -StepName 'Packaging .intunewin' -Percent 90 -OnProgress $OnProgress
+        Write-AppGetterProgress -Step 13 -TotalSteps $totalSteps -StepName 'Packaging .intunewin' -Percent 90 -OnProgress $OnProgress
         $contentPrepPath = Resolve-ContentPrepToolPath
         $packagingSucceeded = $false
 
         if (-not $contentPrepPath) {
             Write-AppGetterLog -Message 'intunewinapputil not found. Use Install-AppGetterContentPrepTool or install Microsoft Win32 Content Prep Tool and ensure it is on PATH.' `
                 -Level Warning -OnProgress $OnProgress
-            Write-AppGetterProgress -Step 13 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
+            Write-AppGetterProgress -Step 14 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
                 -Message 'Metadata created, but Content Prep Tool is unavailable.' -Status Completed -OnProgress $OnProgress
         } else {
             $outputDirectory = Split-Path $versionDirectory -Parent
@@ -186,7 +250,7 @@ function Invoke-AppGetterPackaging {
                 if ($LASTEXITCODE -eq 0 -and (Test-Path $intunewinFile)) {
                     $packagingSucceeded = $true
                     $intunewinSize = [math]::Round((Get-Item $intunewinFile).Length / 1MB, 2)
-                    Write-AppGetterProgress -Step 13 -TotalSteps $totalSteps -StepName 'Complete' -Percent 100 `
+                    Write-AppGetterProgress -Step 14 -TotalSteps $totalSteps -StepName 'Complete' -Percent 100 `
                         -Message "Created $intunewinFile ($intunewinSize MB)" -Status Completed -OnProgress $OnProgress
                 } else {
                     throw 'Content Prep Tool failed or output file was not created.'
@@ -194,7 +258,7 @@ function Invoke-AppGetterPackaging {
             } catch {
                 Write-AppGetterLog -Message "Failed to create IntuneWin package: $_" -Level Warning -OnProgress $OnProgress
                 Write-AppGetterFailureLog -LogPath $failureLogPath -Step 'Packaging .intunewin' -ErrorRecord $_
-                Write-AppGetterProgress -Step 13 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
+                Write-AppGetterProgress -Step 14 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
                     -Message 'Metadata created, but .intunewin packaging failed.' -Status Completed -OnProgress $OnProgress
             }
         }
@@ -218,6 +282,7 @@ function Invoke-AppGetterPackaging {
             FinalDownloadUrl     = $finalDownloadUrl
             Metadata             = $metadata
             Details              = $details
+            Licensing            = (Get-AppGetterSanitizedLicensing -Licensing $licensing)
         }
     }
     catch {

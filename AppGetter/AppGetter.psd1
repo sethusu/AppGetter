@@ -1,5 +1,5 @@
 @{
-    ModuleVersion     = '2.2.0'
+    ModuleVersion     = '2.3.0'
     GUID              = 'b4e9d3f2-0c5e-4a8b-9f7d-2e3c4b5a6d7e'
     Author            = 'AppGetter'
     CompanyName       = 'AppGetter'
@@ -50,6 +50,14 @@
         'Test-AppGetterAcceptedInstallExitCode'
         'Resolve-InstallerInstallCommand'
         'Get-InstallerFingerprint'
+        'Resolve-AppGetterLicensing'
+        'Resolve-AppGetterLicenseTypeToPatternId'
+        'Get-AppGetterLicensingPatternCatalog'
+        'Get-AppGetterLicenseDetailsFromText'
+        'Get-AppGetterLicensingSummary'
+        'Get-AppGetterPackageLicensingInfo'
+        'Add-AppGetterLicenseInstallArgument'
+        'New-AppGetterLicenseInstallStage'
     )
     PrivateData       = @{
         PSData = @{

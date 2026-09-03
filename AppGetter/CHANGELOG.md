@@ -2,6 +2,35 @@
 
 ## Version 2.3.0 - Unreleased
 
+### Licensing pattern discovery and application
+- New **licensing field** ingested from the ServiceNow software record (`-LicenseInfo`, plus a
+  "Licensing (ServiceNow field)" box in the GUI with a live pattern preview). AppGetter identifies
+  which licensing pattern the app follows and applies it to the package instead of only recording it
+- `Private/Licensing.ps1` classifies the field against 13 patterns — open source, freeware, trial,
+  per-user subscription, per-device perpetual, per core/processor, concurrent/floating, license file,
+  site/enterprise, volume activation (MAK/KMS), hardware dongle, OEM, and purchased key — and
+  corroborates the winner with installer evidence (FlexNet/FLEXlm, RLM, Sentinel RMS, HASP,
+  CodeMeter, volume activation clients, trial and sign-in prompts, key-bearing MSI properties)
+- Extracts the license key, `port@host` server, vendor license environment variable, license file
+  name and destination, seat count, expiry date, and approval/chargeback signals out of the field
+- **Applies** the pattern: keys are appended to install commands that accept MSI properties
+  (`msiexec`, WiX Burn) through the property detected in the installer; license files ship inside
+  the package under `license\` and are staged during install; license servers are set through the
+  vendor environment variable. Sign-in, dongle, volume, and trial patterns are logged in the
+  install transcript
+- Writes `licensing.json`, a `licensing` block in `app.json`, a **Licensing** section in the
+  generated `README.md`, and a licensing summary in the `win32LobApp` notes — including a
+  recommended Intune assignment type and compliance notes for seat counts and expiry dates
+- License keys are masked wherever persisted, redacted from the licensing text kept in metadata,
+  stripped from the object returned to callers, and replaced with `***REDACTED***` in the
+  `install.ps1` transcript
+- New parameters: `-LicenseInfo`, `-LicenseType`, `-LicenseKey`, `-LicenseServer`,
+  `-LicenseServerVariable`, `-LicenseFilePath`, `-LicenseFileTargetPath`. `-LicenseType` accepts
+  pattern ids, AppGetter license types, or common ServiceNow *License type* / *License metric* values
+- Pester coverage: `Tests/Licensing.Tests.ps1` (Linux-safe)
+- Packaging is now 14 steps instead of 13. Packaging without a licensing field produces the same
+  output as before
+
 ### Silent switch Sandbox research
 - Added Windows Sandbox **candidate trials** during discovery (`Test-InstallerCommandInSandbox`) that prove silence (no installer UI), accepted exit codes, and new ARP install evidence — not just post-package success
 - Packaging can force trials with `-VerifySilentSwitches` (CLI/GUI); trials also auto-run when static confidence is low/ambiguous and Sandbox is available
