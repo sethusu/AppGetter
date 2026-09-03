@@ -266,3 +266,49 @@ Describe 'SandboxLive silent-switch research trials' -Tag 'SandboxLive' {
         }
     }
 }
+
+Describe 'User-provided install arguments' {
+    It 'Wraps EXE switches around the installer file name' {
+        InModuleScope AppGetter {
+            ConvertTo-AppGetterUserInstallCommand -InstallerFileName 'setup.exe' -UserInput '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' |
+                Should -Be '"setup.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART'
+        }
+    }
+
+    It 'Wraps MSI property switches with msiexec' {
+        InModuleScope AppGetter {
+            ConvertTo-AppGetterUserInstallCommand -InstallerFileName 'app.msi' -UserInput '/qn ALLUSERS=1 /norestart' |
+                Should -Be 'msiexec /i "app.msi" /qn ALLUSERS=1 /norestart'
+        }
+    }
+
+    It 'Keeps a full msiexec command unchanged' {
+        InModuleScope AppGetter {
+            $command = 'msiexec /i "app.msi" /qn ALLUSERS=1'
+            ConvertTo-AppGetterUserInstallCommand -InstallerFileName 'app.msi' -UserInput $command |
+                Should -Be $command
+        }
+    }
+
+    It 'Keeps a quoted EXE command unchanged' {
+        InModuleScope AppGetter {
+            $command = '"vendor-setup.exe" /S /norestart'
+            ConvertTo-AppGetterUserInstallCommand -InstallerFileName 'other.exe' -UserInput $command |
+                Should -Be $command
+        }
+    }
+
+    It 'Substitutes the {installer} placeholder' {
+        InModuleScope AppGetter {
+            ConvertTo-AppGetterUserInstallCommand -InstallerFileName 'Foo_1.2.exe' -UserInput '"{installer}" /S /D=C:\Apps\Foo' |
+                Should -Be '"Foo_1.2.exe" /S /D=C:\Apps\Foo'
+        }
+    }
+
+    It 'Returns null for blank input so discovery still runs' {
+        InModuleScope AppGetter {
+            ConvertTo-AppGetterUserInstallCommand -InstallerFileName 'setup.exe' -UserInput '   ' |
+                Should -Be $null
+        }
+    }
+}

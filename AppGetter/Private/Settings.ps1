@@ -63,7 +63,8 @@ function Get-AppGetterSettings {
         LastAppName       = ''
         LastWebsiteUrl    = ''
         LastDownloadUrl   = ''
-        LastInstallerPath = ''
+        LastInstallerPath   = ''
+        LastInstallCommand  = ''
     }
 
     if (Test-Path $settingsPath) {
@@ -97,6 +98,7 @@ function Save-AppGetterSettings {
         [string]$LastWebsiteUrl,
         [string]$LastDownloadUrl,
         [string]$LastInstallerPath,
+        [string]$LastInstallCommand,
         [string]$PackageId
     )
 
@@ -123,6 +125,9 @@ function Save-AppGetterSettings {
     }
     if ($PSBoundParameters.ContainsKey('LastInstallerPath')) {
         $current.LastInstallerPath = $LastInstallerPath
+    }
+    if ($PSBoundParameters.ContainsKey('LastInstallCommand')) {
+        $current.LastInstallCommand = $LastInstallCommand
     }
 
     $current | ConvertTo-Json | Set-Content -Path $settingsPath -Encoding UTF8

@@ -2,6 +2,12 @@
 
 ## Version 2.3.0 - Unreleased
 
+### Manual silent switches in the GUI
+- Added an optional **Silent switches / install arguments** field so you can supply known flags (`/VERYSILENT /NORESTART`) or a full install command
+- Switches-only input is wrapped around the downloaded installer (MSI uses `msiexec /i`); `{installer}` can stand in for the file name
+- Filling the field skips auto-discovery; checking **Verify silent install switches** still trials your command in Windows Sandbox
+- Last-used value is saved in `%AppData%\AppGetter\settings.json`
+
 ### Silent switch Sandbox research
 - Added Windows Sandbox **candidate trials** during discovery (`Test-InstallerCommandInSandbox`) that prove silence (no installer UI), accepted exit codes, and new ARP install evidence — not just post-package success
 - Packaging can force trials with `-VerifySilentSwitches` (CLI/GUI); trials also auto-run when static confidence is low/ambiguous and Sandbox is available

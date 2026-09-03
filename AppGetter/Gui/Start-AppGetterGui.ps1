@@ -316,7 +316,7 @@ function Start-AppGetterBackgroundPackaging {
             OutputPath = $PackArguments.OutputPath
             OnProgress = $onProgress
         }
-        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath')) {
+        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath', 'InstallCommand')) {
             if ($PackArguments[$key]) { $params[$key] = $PackArguments[$key] }
         }
         if ($PackArguments.ContainsKey('VerifySilentSwitches') -and $PackArguments.VerifySilentSwitches) {
@@ -732,6 +732,7 @@ $supportUrlBox = $window.FindName('SupportUrlBox')
 $versionBox = $window.FindName('VersionBox')
 $outputPathBox = $window.FindName('OutputPathBox')
 $browseOutputButton = $window.FindName('BrowseOutputButton')
+$installCommandBox = $window.FindName('InstallCommandBox')
 $verifySilentSwitchesCheckBox = $window.FindName('VerifySilentSwitchesCheckBox')
 $progressBar = $window.FindName('ProgressBar')
 $progressStatus = $window.FindName('ProgressStatusText')
@@ -765,6 +766,9 @@ $appNameBox.Text = $settings.LastAppName
 $websiteUrlBox.Text = $settings.LastWebsiteUrl
 $downloadUrlBox.Text = $settings.LastDownloadUrl
 $installerPathBox.Text = $settings.LastInstallerPath
+if ($installCommandBox -and $settings.LastInstallCommand) {
+    $installCommandBox.Text = $settings.LastInstallCommand
+}
 Initialize-StepList -ListControl $stepList
 
 function Update-OutputPathForApp {
@@ -992,6 +996,9 @@ function Set-PackControlsEnabled {
     $versionBox.IsEnabled = $Enabled
     $browseOutputButton.IsEnabled = $Enabled
     $browseIconButton.IsEnabled = $Enabled
+    if ($installCommandBox) {
+        $installCommandBox.IsEnabled = $Enabled
+    }
     if ($verifySilentSwitchesCheckBox) {
         $verifySilentSwitchesCheckBox.IsEnabled = $Enabled
     }
@@ -1117,7 +1124,9 @@ function Start-AppGetterPackagingFromUi {
     $script:baseOutputPath = Get-AppGetterBaseOutputPath -Path $outputPath -PackageId $packageId
     # Always pack into a folder named after the app.
     $outputPathBox.Text = Get-AppGetterAppOutputPath -BasePath $script:baseOutputPath -PackageId $packageId
-    Save-AppGetterSettings -OutputPath $script:baseOutputPath -PackageId $packageId
+    $manualInstallCommand = if ($installCommandBox) { $installCommandBox.Text.Trim() } else { '' }
+    Save-AppGetterSettings -OutputPath $script:baseOutputPath -PackageId $packageId `
+        -LastInstallCommand $manualInstallCommand
 
     $packArguments = @{
         AppName       = $appName
@@ -1130,6 +1139,7 @@ function Start-AppGetterPackagingFromUi {
         Publisher     = $publisherBox.Text.Trim()
         OutputPath    = $script:baseOutputPath
         IconPath      = $script:customIconPath
+        InstallCommand = $manualInstallCommand
         VerifySilentSwitches = [bool]($verifySilentSwitchesCheckBox -and $verifySilentSwitchesCheckBox.IsChecked)
     }
 

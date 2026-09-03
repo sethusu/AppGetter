@@ -25,7 +25,8 @@
 .PARAMETER IconPath
     Optional. Path to a custom PNG icon.
 .PARAMETER InstallCommand
-    Optional. Custom install command.
+    Optional. Custom install command or silent switches (for example /S /norestart).
+    Switches-only input is prefixed with the installer file name. Auto-detected if omitted.
 .PARAMETER VerifySilentSwitches
     Optional. Run ranked silent-install candidates in Windows Sandbox during packaging
     (also auto-runs when static confidence is low and Sandbox is available).

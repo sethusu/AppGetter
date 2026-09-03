@@ -64,10 +64,11 @@ Or launch the GUI directly:
 ```
 
 3. Enter the **application name** and one of: a **website URL** (to scan for download links), a **direct download URL**, or a **local installer file** (Browse...).
-4. Choose an **output folder** — each app gets its own subfolder (default: `Documents\AppGetter\{App}`).
-5. Click **Create Package** and watch the live progress steps (the window stays responsive while packaging runs in the background).
-6. Optionally click **Test in Sandbox** to confirm install, detection, and uninstall inside Windows Sandbox before uploading to Intune.
-7. Open the output folder and upload the `.intunewin` to Intune using the included `README.md` as your field guide.
+4. Optionally enter **silent switches / install arguments** when you already know them (for example `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, or a full `msiexec /i setup.msi /qn` command). Leave the field blank to auto-detect.
+5. Choose an **output folder** — each app gets its own subfolder (default: `Documents\AppGetter\{App}`).
+6. Click **Create Package** and watch the live progress steps (the window stays responsive while packaging runs in the background).
+7. Optionally click **Test in Sandbox** to confirm install, detection, and uninstall inside Windows Sandbox before uploading to Intune.
+8. Open the output folder and upload the `.intunewin` to Intune using the included `README.md` as your field guide.
 
 If the Content Prep Tool is missing, the header shows an **Install Content Prep** button that installs `intunewinapputil` via winget.
 
@@ -174,7 +175,7 @@ Default output path and last-used settings are saved to:
 | **SupportUrl** | Optional docs page for silent install switch discovery |
 | **OutputPath** | Base output directory |
 | **IconPath** | Custom PNG icon |
-| **InstallCommand** | Custom install command (auto-detected if omitted) |
+| **InstallCommand** | Custom install command or silent switches (auto-detected if omitted). Switches-only values such as `/S /norestart` are prefixed with the installer file name. |
 | **VerifySilentSwitches** | Trial ranked silent-switch candidates in Windows Sandbox during packaging |
 | **UseGui** | Launch the WPF GUI |
 
