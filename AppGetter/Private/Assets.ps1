@@ -41,6 +41,59 @@ function Get-InstallerInstallCommand {
     }
 }
 
+function ConvertTo-AppGetterUserInstallCommand {
+    <#
+    .SYNOPSIS
+        Builds an install command from user-supplied switches or a full command line.
+    .DESCRIPTION
+        Accepts either a complete command (msiexec /i setup.msi /qn, "setup.exe" /S)
+        or arguments only (/VERYSILENT /NORESTART). Argument-only input is prefixed
+        with the downloaded installer file name (msiexec /i for MSI).
+    #>
+    param(
+        [string]$InstallerFileName,
+        [string]$UserInput
+    )
+
+    if ([string]::IsNullOrWhiteSpace($UserInput)) {
+        return $null
+    }
+
+    $trimmed = $UserInput.Trim()
+    if ($InstallerFileName -and $trimmed.Contains('{installer}')) {
+        $trimmed = $trimmed.Replace('{installer}', $InstallerFileName)
+    }
+
+    $looksLikeFullCommand = $false
+    if ($trimmed -match '(?i)\bmsiexec\b') {
+        $looksLikeFullCommand = $true
+    } elseif ($trimmed -match '(?i)^\s*Add-AppxPackage\b') {
+        $looksLikeFullCommand = $true
+    } elseif ($trimmed -match '(?i)^\s*".+\.(exe|msi|msix|appx)"') {
+        $looksLikeFullCommand = $true
+    } elseif ($trimmed -match '(?i)^\s*\S+\.(exe|msi|msix|appx)(\s|$)') {
+        $looksLikeFullCommand = $true
+    } elseif ($InstallerFileName -and $trimmed.IndexOf($InstallerFileName, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        $looksLikeFullCommand = $true
+    }
+
+    if ($looksLikeFullCommand) {
+        return $trimmed
+    }
+
+    if ([string]::IsNullOrWhiteSpace($InstallerFileName)) {
+        return $trimmed
+    }
+
+    $extension = [System.IO.Path]::GetExtension($InstallerFileName)
+    switch ($extension.ToLowerInvariant()) {
+        '.msi' { return "msiexec /i `"$InstallerFileName`" $trimmed" }
+        '.msix' { return "Add-AppxPackage -Path `"$InstallerFileName`"" }
+        '.appx' { return "Add-AppxPackage -Path `"$InstallerFileName`"" }
+        default { return "`"$InstallerFileName`" $trimmed" }
+    }
+}
+
 function Get-IntuneUninstallCommandLine {
     return '%windir%\sysnative\windowspowershell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1'
 }

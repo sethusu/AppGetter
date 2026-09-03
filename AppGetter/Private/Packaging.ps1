@@ -136,8 +136,43 @@ function Invoke-AppGetterPackaging {
                 -Level $(if ($switchDiscoveryResult.NeedsManualReview) { 'Warning' } else { 'Success' }) -OnProgress $OnProgress
             Write-AppGetterLog -Message "Selected install command: $installerInstallCommand" -OnProgress $OnProgress
         } else {
-            $installerInstallCommand = $InstallCommand
-            Write-AppGetterLog -Message 'Using user-provided install command; silent switch discovery skipped.' -OnProgress $OnProgress
+            $installerInstallCommand = ConvertTo-AppGetterUserInstallCommand `
+                -InstallerFileName $installerFileName `
+                -UserInput $InstallCommand
+            Write-AppGetterLog -Message "Using user-provided install arguments; silent switch discovery skipped. Command: $installerInstallCommand" -OnProgress $OnProgress
+
+            $verification = $null
+            $verified = $false
+            if ($VerifySilentSwitches) {
+                Write-AppGetterLog -Message "Sandbox-verifying user-provided install command: $installerInstallCommand" -OnProgress $OnProgress
+                $verification = Test-InstallerCommand `
+                    -InstallerPath $installerFile.FullName `
+                    -Command $installerInstallCommand `
+                    -AppName $AppName `
+                    -AllowSandboxVerification
+                $verified = [bool]($verification -and $verification.Verified)
+                if ($verification -and $verification.Message) {
+                    Write-AppGetterLog -Message $verification.Message `
+                        -Level $(if ($verified) { 'Success' } else { 'Warning' }) -OnProgress $OnProgress
+                }
+            }
+
+            $switchDiscoveryResult = [PSCustomObject]@{
+                RecommendedCommand   = $installerInstallCommand
+                AlternativeCommands  = @()
+                ConfidenceScore      = 100
+                EvidenceSummary      = @("User-provided install arguments: $InstallCommand")
+                NeedsManualReview    = -not $verified
+                Verified             = $verified
+                InstallerFamily      = 'user'
+                PrimaryType          = 'user'
+                Fingerprint          = $null
+                Candidates           = @()
+                Verification         = $verification
+                VerificationAttempts = @()
+                InstallerHash        = $installerHash
+                UsedCache            = $false
+            }
         }
 
         Write-AppGetterProgress -Step 7 -TotalSteps $totalSteps -StepName 'Generating install.ps1' -Percent 48 -OnProgress $OnProgress
@@ -201,7 +236,8 @@ function Invoke-AppGetterPackaging {
 
         Save-AppGetterSettings -OutputPath $OutputPath -LastAppName $AppName `
             -LastWebsiteUrl $WebsiteUrl -LastDownloadUrl $DownloadUrl `
-            -LastInstallerPath $InstallerPath -PackageId $details.PackageId
+            -LastInstallerPath $InstallerPath -LastInstallCommand $InstallCommand `
+            -PackageId $details.PackageId
 
         return [PSCustomObject]@{
             Success              = $true
