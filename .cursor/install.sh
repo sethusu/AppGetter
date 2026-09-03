@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Idempotent Cloud Agent setup for the AppGetter PowerShell tool.
-# The .cursor/Dockerfile bakes PowerShell Core (pwsh) plus the PSScriptAnalyzer
-# (lint) and Pester 5+ (tests) modules into the image. This script runs after
-# checkout as an idempotent safety net: if a module is already present it is
-# skipped, otherwise it is installed for the current user. Safe to run repeatedly.
+# The base environment provides PowerShell Core (pwsh). This script ensures the
+# PowerShell modules AppGetter needs for linting (PSScriptAnalyzer) and the test
+# suite (Pester 5+) are available: if a module is already present it is skipped,
+# otherwise it is installed for the current user. Safe to run repeatedly, and it
+# is the command wired into the Cloud Agent environment's install step.
 set -euo pipefail
 
 if ! command -v pwsh >/dev/null 2>&1; then
