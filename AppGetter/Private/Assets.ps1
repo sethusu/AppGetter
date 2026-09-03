@@ -62,7 +62,11 @@ function Test-AppGetterLooksLikeFullInstallCommand {
     if ($trimmed -match '^["''][^"'']+\.(exe|msi|msix|appx|msp|bat|cmd)["'']') {
         return $true
     }
-    if ($trimmed -match '(?i)^(\.\\|[a-z]:\\|/)') {
+    if ($trimmed -match '(?i)^(\.\\|[a-z]:\\|\\\\)') {
+        return $true
+    }
+    # Unix-style path to an installer, not a switch like /VERYSILENT or /qn
+    if ($trimmed -match '(?i)^/.+\.(exe|msi|msix|appx|msp|bat|cmd)(\s|$)') {
         return $true
     }
     return $false

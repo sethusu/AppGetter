@@ -90,6 +90,11 @@ Describe 'Manual install arguments' {
             -UserInput '"setup.exe" /S /D=C:\Apps\Foo'
         $command | Should -Be '"setup.exe" /S /D=C:\Apps\Foo'
     }
+
+    It 'Treats a short /S switch as arguments, not a full command' {
+        $command = Resolve-AppGetterManualInstallCommand -InstallerFileName 'setup.exe' -UserInput '/S'
+        $command | Should -Be '"setup.exe" /S'
+    }
 }
 
 Describe 'Silent switch cache and verification mapping' {
