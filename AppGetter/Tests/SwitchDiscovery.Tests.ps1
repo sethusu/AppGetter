@@ -68,6 +68,30 @@ Describe 'Installer fingerprint corpus' {
     }
 }
 
+Describe 'Manual install arguments' {
+    It 'Appends EXE switches to the installer file name' {
+        $command = Resolve-AppGetterManualInstallCommand -InstallerFileName 'setup.exe' -UserInput '/VERYSILENT /NORESTART /LANG=english'
+        $command | Should -Be '"setup.exe" /VERYSILENT /NORESTART /LANG=english'
+    }
+
+    It 'Builds an msiexec command from MSI switches' {
+        $command = Resolve-AppGetterManualInstallCommand -InstallerFileName 'app.msi' -UserInput '/qn ALLUSERS=1'
+        $command | Should -Be 'msiexec /i "app.msi" /qn ALLUSERS=1'
+    }
+
+    It 'Keeps a full msiexec command unchanged' {
+        $command = Resolve-AppGetterManualInstallCommand -InstallerFileName 'app.msi' `
+            -UserInput 'msiexec /i "app.msi" /qn /norestart'
+        $command | Should -Be 'msiexec /i "app.msi" /qn /norestart'
+    }
+
+    It 'Keeps a quoted full EXE command unchanged' {
+        $command = Resolve-AppGetterManualInstallCommand -InstallerFileName 'setup.exe' `
+            -UserInput '"setup.exe" /S /D=C:\Apps\Foo'
+        $command | Should -Be '"setup.exe" /S /D=C:\Apps\Foo'
+    }
+}
+
 Describe 'Silent switch cache and verification mapping' {
     BeforeEach {
         $script:cachePath = Join-Path ([System.IO.Path]::GetTempPath()) ("appgetter-cache-{0}.json" -f ([Guid]::NewGuid().ToString('N')))

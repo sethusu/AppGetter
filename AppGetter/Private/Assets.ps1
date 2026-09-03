@@ -41,6 +41,72 @@ function Get-InstallerInstallCommand {
     }
 }
 
+function Test-AppGetterLooksLikeFullInstallCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$UserInput,
+        [string]$InstallerFileName
+    )
+
+    $trimmed = $UserInput.Trim()
+    if ($trimmed -match '(?i)^(msiexec|add-appxpackage)\b') {
+        return $true
+    }
+    if ($trimmed -match '(?i)^cmd(\.exe)?\s+/c\b') {
+        return $true
+    }
+    if ($InstallerFileName -and ($trimmed -like "*$InstallerFileName*")) {
+        return $true
+    }
+    # Quoted executable or an explicit path, not just switches like /S or ALLUSERS=1
+    if ($trimmed -match '^["''][^"'']+\.(exe|msi|msix|appx|msp|bat|cmd)["'']') {
+        return $true
+    }
+    if ($trimmed -match '(?i)^(\.\\|[a-z]:\\|/)') {
+        return $true
+    }
+    return $false
+}
+
+function Resolve-AppGetterManualInstallCommand {
+    <#
+    .SYNOPSIS
+        Turns user-supplied silent switches or a full command into an install.ps1 command.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerFileName,
+        [Parameter(Mandatory = $true)]
+        [string]$UserInput
+    )
+
+    $trimmed = $UserInput.Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmed)) {
+        throw 'User-provided install arguments were empty.'
+    }
+
+    if (Test-AppGetterLooksLikeFullInstallCommand -UserInput $trimmed -InstallerFileName $InstallerFileName) {
+        return $trimmed
+    }
+
+    $extension = [System.IO.Path]::GetExtension($InstallerFileName)
+    if (-not $extension) {
+        $extension = ''
+    }
+
+    switch ($extension.ToLower()) {
+        '.msi' {
+            if ($trimmed -match '(?i)(^|\s)/i(\s|$)') {
+                return "msiexec $trimmed"
+            }
+            return "msiexec /i `"$InstallerFileName`" $trimmed"
+        }
+        '.msix' { return "Add-AppxPackage -Path `"$InstallerFileName`"" }
+        '.appx' { return "Add-AppxPackage -Path `"$InstallerFileName`"" }
+        default { return "`"$InstallerFileName`" $trimmed" }
+    }
+}
+
 function Get-IntuneUninstallCommandLine {
     return '%windir%\sysnative\windowspowershell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File uninstall.ps1'
 }

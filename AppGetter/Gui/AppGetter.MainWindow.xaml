@@ -1,7 +1,7 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="AppGetter - Intune Win32 Package Creator"
-        Height="860" Width="980"
+        Height="920" Width="980"
         MinHeight="700" MinWidth="860"
         WindowStartupLocation="CenterScreen"
         Background="#F5F7FA">
@@ -56,6 +56,8 @@
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0" Grid.Column="0" Text="Application Name *" FontWeight="SemiBold" Margin="0,0,8,6"/>
@@ -98,10 +100,16 @@
                    ToolTip="Base output folder. Each app gets its own subfolder."/>
         </DockPanel>
 
-        <CheckBox Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="2" x:Name="VerifySilentSwitchesCheckBox"
+        <TextBlock Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="2"
+                   Text="Silent install switches / arguments (optional)" FontWeight="SemiBold" Margin="0,12,0,6"/>
+        <TextBox Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="2" x:Name="InstallArgumentsBox"
+                 Height="30" VerticalContentAlignment="Center" Margin="0,0,0,4"
+                 ToolTip="Optional. Enter silent switches and extra install arguments you already know, for example /VERYSILENT /NORESTART or /qn ALLUSERS=1. Leave blank to auto-detect. A full install command is also accepted."/>
+
+        <CheckBox Grid.Row="11" Grid.Column="0" Grid.ColumnSpan="2" x:Name="VerifySilentSwitchesCheckBox"
                   Content="Verify silent install switches in Windows Sandbox (tries ranked candidates)"
-                  Margin="0,12,0,0"
-                  ToolTip="When checked, AppGetter trials top silent-switch candidates in Windows Sandbox during packaging. Also auto-runs when static confidence is low and Sandbox is available."/>
+                  Margin="0,8,0,0"
+                  ToolTip="When checked, AppGetter trials top silent-switch candidates in Windows Sandbox during packaging. If you entered manual switches, those are verified instead. Also auto-runs when static confidence is low and Sandbox is available."/>
       </Grid>
     </Border>
 

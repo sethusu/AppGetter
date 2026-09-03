@@ -316,7 +316,7 @@ function Start-AppGetterBackgroundPackaging {
             OutputPath = $PackArguments.OutputPath
             OnProgress = $onProgress
         }
-        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath')) {
+        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath', 'InstallArguments', 'InstallCommand')) {
             if ($PackArguments[$key]) { $params[$key] = $PackArguments[$key] }
         }
         if ($PackArguments.ContainsKey('VerifySilentSwitches') -and $PackArguments.VerifySilentSwitches) {
@@ -732,6 +732,7 @@ $supportUrlBox = $window.FindName('SupportUrlBox')
 $versionBox = $window.FindName('VersionBox')
 $outputPathBox = $window.FindName('OutputPathBox')
 $browseOutputButton = $window.FindName('BrowseOutputButton')
+$installArgumentsBox = $window.FindName('InstallArgumentsBox')
 $verifySilentSwitchesCheckBox = $window.FindName('VerifySilentSwitchesCheckBox')
 $progressBar = $window.FindName('ProgressBar')
 $progressStatus = $window.FindName('ProgressStatusText')
@@ -992,6 +993,9 @@ function Set-PackControlsEnabled {
     $versionBox.IsEnabled = $Enabled
     $browseOutputButton.IsEnabled = $Enabled
     $browseIconButton.IsEnabled = $Enabled
+    if ($installArgumentsBox) {
+        $installArgumentsBox.IsEnabled = $Enabled
+    }
     if ($verifySilentSwitchesCheckBox) {
         $verifySilentSwitchesCheckBox.IsEnabled = $Enabled
     }
@@ -1130,6 +1134,7 @@ function Start-AppGetterPackagingFromUi {
         Publisher     = $publisherBox.Text.Trim()
         OutputPath    = $script:baseOutputPath
         IconPath      = $script:customIconPath
+        InstallArguments = if ($installArgumentsBox) { $installArgumentsBox.Text.Trim() } else { '' }
         VerifySilentSwitches = [bool]($verifySilentSwitchesCheckBox -and $verifySilentSwitchesCheckBox.IsChecked)
     }
 

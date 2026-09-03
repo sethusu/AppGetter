@@ -25,7 +25,12 @@
 .PARAMETER IconPath
     Optional. Path to a custom PNG icon.
 .PARAMETER InstallCommand
-    Optional. Custom install command.
+    Optional. Custom install command (full command line). When omitted, silent switches
+    are auto-detected unless -InstallArguments is supplied.
+.PARAMETER InstallArguments
+    Optional. Silent installer switches and extra install arguments you already know
+    (for example /VERYSILENT /NORESTART or /qn ALLUSERS=1). Combined with the
+    downloaded installer file name. A full command is also accepted.
 .PARAMETER VerifySilentSwitches
     Optional. Run ranked silent-install candidates in Windows Sandbox during packaging
     (also auto-runs when static confidence is low and Sandbox is available).
@@ -77,6 +82,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$InstallCommand,
+
+    [Parameter(Mandatory = $false)]
+    [string]$InstallArguments,
 
     [Parameter(Mandatory = $false)]
     [switch]$VerifySilentSwitches,
@@ -226,6 +234,7 @@ try {
         OutputPath    = $OutputPath
         IconPath      = $IconPath
         InstallCommand = $InstallCommand
+        InstallArguments = $InstallArguments
         OnProgress    = $onProgress
     }
     if ($VerifySilentSwitches) {
