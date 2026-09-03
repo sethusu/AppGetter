@@ -64,10 +64,11 @@ Or launch the GUI directly:
 ```
 
 3. Enter the **application name** and one of: a **website URL** (to scan for download links), a **direct download URL**, or a **local installer file** (Browse...).
-4. Choose an **output folder** — each app gets its own subfolder (default: `Documents\AppGetter\{App}`).
-5. Click **Create Package** and watch the live progress steps (the window stays responsive while packaging runs in the background).
-6. Optionally click **Test in Sandbox** to confirm install, detection, and uninstall inside Windows Sandbox before uploading to Intune.
-7. Open the output folder and upload the `.intunewin` to Intune using the included `README.md` as your field guide.
+4. If you already know the silent switches, enter them in **Install arguments / silent switches** (e.g. `/S /norestart` or `/qn PROPERTY=1`) — they are combined with the installer file name (MSI installers are wrapped with `msiexec /i`), and automatic switch discovery is skipped. You can also paste a full command like `msiexec /i "setup.msi" /qn`. Leave the field blank to let AppGetter discover the switches.
+5. Choose an **output folder** — each app gets its own subfolder (default: `Documents\AppGetter\{App}`).
+6. Click **Create Package** and watch the live progress steps (the window stays responsive while packaging runs in the background).
+7. Optionally click **Test in Sandbox** to confirm install, detection, and uninstall inside Windows Sandbox before uploading to Intune.
+8. Open the output folder and upload the `.intunewin` to Intune using the included `README.md` as your field guide.
 
 If the Content Prep Tool is missing, the header shows an **Install Content Prep** button that installs `intunewinapputil` via winget.
 
@@ -124,6 +125,10 @@ cd AppGetter
 .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/setup.exe" -AppName "MyApp" `
     -OutputPath "C:\IntunePackages" `
     -IconPath "C:\Icons\myapp.png"
+
+# Provide your own silent switches (skips automatic switch discovery)
+.\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/setup.exe" -AppName "MyApp" `
+    -InstallerArguments "/S /norestart"
 ```
 
 ---
@@ -180,6 +185,7 @@ Default output path and last-used settings are saved to:
 | **OutputPath** | Base output directory |
 | **IconPath** | Custom PNG icon |
 | **InstallCommand** | Custom install command (auto-detected if omitted) |
+| **InstallerArguments** | Your own silent switches / arguments (e.g. `/S /norestart`); combined with the installer file name, MSI wrapped with `msiexec /i`. Skips automatic switch discovery |
 | **VerifySilentSwitches** | Trial ranked silent-switch candidates in Windows Sandbox during packaging |
 | **UseGui** | Launch the WPF GUI |
 

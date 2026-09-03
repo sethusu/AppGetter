@@ -61,4 +61,5 @@ Export-ModuleMember -Function @(
     'Test-AppGetterAcceptedInstallExitCode'
     'Resolve-InstallerInstallCommand'
     'Get-InstallerFingerprint'
+    'ConvertTo-AppGetterInstallCommand'
 )

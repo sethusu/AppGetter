@@ -29,6 +29,11 @@
     Optional. Path to a custom PNG icon.
 .PARAMETER InstallCommand
     Optional. Custom install command.
+.PARAMETER InstallerArguments
+    Optional. Your own silent install switches / arguments (e.g. "/S /norestart" or
+    "/qn PROPERTY=1"). Combined with the installer file name once it is known
+    (MSI installers are wrapped with msiexec /i). Skips automatic switch discovery.
+    Ignored when -InstallCommand is provided.
 .PARAMETER VerifySilentSwitches
     Optional. Run ranked silent-install candidates in Windows Sandbox during packaging
     (also auto-runs when static confidence is low and Sandbox is available).
@@ -83,6 +88,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$InstallCommand,
+
+    [Parameter(Mandatory = $false)]
+    [string]$InstallerArguments,
 
     [Parameter(Mandatory = $false)]
     [switch]$VerifySilentSwitches,
@@ -233,6 +241,7 @@ try {
         OutputPath    = $OutputPath
         IconPath      = $IconPath
         InstallCommand = $InstallCommand
+        InstallerArguments = $InstallerArguments
         OnProgress    = $onProgress
     }
     if ($VerifySilentSwitches) {
