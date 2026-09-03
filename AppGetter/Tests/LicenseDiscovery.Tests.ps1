@@ -31,14 +31,21 @@ Describe 'Resolve-AppGetterLicensePattern' {
         $result.SourceText | Should -Be 'Per Device'
     }
 
-    It 'Maps Per Named User and user subscription aliases to per-user' {
+    It 'Maps Per Named User and Named User Plus to per-user' {
         $named = Resolve-AppGetterLicensePattern -LicenseInfo 'Per Named User'
         $named.Pattern | Should -Be 'perUser'
         $named.InstallContext | Should -Be 'user'
         $named.AssignmentTarget | Should -Be 'user'
 
-        $subUser = Resolve-AppGetterLicensePattern -LicenseInfo 'Named User Plus'
-        $subUser.Pattern | Should -Be 'perUser'
+        $plus = Resolve-AppGetterLicensePattern -LicenseInfo 'Named User Plus'
+        $plus.Pattern | Should -Be 'perUser'
+    }
+
+    It 'Maps User Subscription to the subscription pattern' {
+        $result = Resolve-AppGetterLicensePattern -LicenseInfo 'User Subscription'
+        $result.Pattern | Should -Be 'subscription'
+        $result.InstallContext | Should -Be 'user'
+        $result.RequiresLicenseKey | Should -Be $false
     }
 
     It 'Prefers Concurrent User over a generic user match' {
