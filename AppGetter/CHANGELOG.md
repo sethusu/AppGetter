@@ -2,6 +2,11 @@
 
 ## Version 2.3.0 - Unreleased
 
+### Manual silent install switches
+- GUI field **Silent install switches / arguments** lets you supply known silent switches and extra install args (`/VERYSILENT /NORESTART`, `/qn ALLUSERS=1`, or a full command)
+- CLI `-InstallArguments` does the same; existing `-InstallCommand` still accepts a full command line
+- Manual input skips automatic switch discovery and is baked into `install.ps1`. Sandbox verification (when requested) trials the command you entered
+
 ### Silent switch Sandbox research
 - Added Windows Sandbox **candidate trials** during discovery (`Test-InstallerCommandInSandbox`) that prove silence (no installer UI), accepted exit codes, and new ARP install evidence — not just post-package success
 - Packaging can force trials with `-VerifySilentSwitches` (CLI/GUI); trials also auto-run when static confidence is low/ambiguous and Sandbox is available

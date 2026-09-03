@@ -30,21 +30,28 @@ Write-Host "`nExample 4: Local installer file" -ForegroundColor Cyan
 #     -Version "1.0.0" `
 #     -Publisher "MyCompany"
 
-# Example 5: With custom output path
-Write-Host "`nExample 5: Custom output path" -ForegroundColor Cyan
+# Example 5: Known silent switches (skip auto-discovery)
+Write-Host "`nExample 5: Manual silent install switches" -ForegroundColor Cyan
+# .\Create-IntuneWinFromWeb.ps1 `
+#     -InstallerPath "C:\Installers\setup.exe" `
+#     -AppName "MyApp" `
+#     -InstallArguments "/VERYSILENT /NORESTART /LANG=english"
+
+# Example 6: With custom output path
+Write-Host "`nExample 6: Custom output path" -ForegroundColor Cyan
 # .\Create-IntuneWinFromWeb.ps1 `
 #     -DownloadUrl "https://example.com/setup.exe" `
 #     -AppName "MyApp" `
 #     -OutputPath "C:\IntunePackages"
 
-# Example 6: PowerShell module (advanced)
-Write-Host "`nExample 6: Module usage" -ForegroundColor Cyan
+# Example 7: PowerShell module (advanced)
+Write-Host "`nExample 7: Module usage" -ForegroundColor Cyan
 # Import-Module .\AppGetter.psd1
 # Test-AppGetterPrerequisites
 # Install-AppGetterContentPrepTool   # installs intunewinapputil via winget if missing
 # Invoke-AppGetterPackaging -AppName "MyApp" -DownloadUrl "https://example.com/setup.exe"
 # Invoke-AppGetterPackaging -AppName "MyApp" -InstallerPath "C:\Installers\setup.exe"
 
-# Example 7: Build the double-clickable AppGetter.exe (Windows only)
-Write-Host "`nExample 7: Build AppGetter.exe" -ForegroundColor Cyan
+# Example 8: Build the double-clickable AppGetter.exe (Windows only)
+Write-Host "`nExample 8: Build AppGetter.exe" -ForegroundColor Cyan
 # .\Build\Build-AppGetterExe.ps1

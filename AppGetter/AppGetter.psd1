@@ -49,6 +49,7 @@
         'New-AppGetterSandboxTrialGuestScript'
         'Test-AppGetterAcceptedInstallExitCode'
         'Resolve-InstallerInstallCommand'
+        'Resolve-AppGetterManualInstallCommand'
         'Get-InstallerFingerprint'
     )
     PrivateData       = @{

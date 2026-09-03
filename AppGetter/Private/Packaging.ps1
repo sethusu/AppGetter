@@ -13,6 +13,7 @@ function Invoke-AppGetterPackaging {
         [string]$OutputPath = (Get-AppGetterSettings).OutputPath,
         [string]$IconPath,
         [string]$InstallCommand,
+        [string]$InstallArguments,
         [switch]$VerifySilentSwitches,
         [int]$MaxCandidatesToVerify = 3,
         [scriptblock]$OnProgress
@@ -107,7 +108,14 @@ function Invoke-AppGetterPackaging {
             -Message $installerFile.Name -OnProgress $OnProgress
 
         $switchDiscoveryResult = $null
-        if ([string]::IsNullOrWhiteSpace($InstallCommand)) {
+        $manualInstallInput = $null
+        if (-not [string]::IsNullOrWhiteSpace($InstallCommand)) {
+            $manualInstallInput = $InstallCommand.Trim()
+        } elseif (-not [string]::IsNullOrWhiteSpace($InstallArguments)) {
+            $manualInstallInput = $InstallArguments.Trim()
+        }
+
+        if ([string]::IsNullOrWhiteSpace($manualInstallInput)) {
             if ($VerifySilentSwitches) {
                 Write-AppGetterLog -Message 'Silent switch Sandbox verification requested (-VerifySilentSwitches).' -OnProgress $OnProgress
             }
@@ -136,8 +144,51 @@ function Invoke-AppGetterPackaging {
                 -Level $(if ($switchDiscoveryResult.NeedsManualReview) { 'Warning' } else { 'Success' }) -OnProgress $OnProgress
             Write-AppGetterLog -Message "Selected install command: $installerInstallCommand" -OnProgress $OnProgress
         } else {
-            $installerInstallCommand = $InstallCommand
-            Write-AppGetterLog -Message 'Using user-provided install command; silent switch discovery skipped.' -OnProgress $OnProgress
+            $installerInstallCommand = Resolve-AppGetterManualInstallCommand `
+                -InstallerFileName $installerFile.Name `
+                -UserInput $manualInstallInput
+            Write-AppGetterLog -Message "Using user-provided install arguments. Selected install command: $installerInstallCommand" `
+                -OnProgress $OnProgress
+
+            $verified = $false
+            $verification = $null
+            $evidence = [System.Collections.Generic.List[string]]::new()
+            $evidence.Add('User-provided silent switches / install arguments; automatic discovery skipped.') | Out-Null
+
+            if ($VerifySilentSwitches) {
+                Write-AppGetterLog -Message 'Silent switch Sandbox verification requested for the user-provided command.' -OnProgress $OnProgress
+                $verification = Test-InstallerCommand `
+                    -InstallerPath $installerFile.FullName `
+                    -Command $installerInstallCommand `
+                    -AppName $AppName `
+                    -AllowSandboxVerification `
+                    -TimeoutSeconds 900
+                if ($verification -and $verification.Verified) {
+                    $verified = $true
+                    $evidence.Add("Sandbox verified user-provided command: $($verification.Message)") | Out-Null
+                } elseif ($verification -and $verification.Message) {
+                    $evidence.Add("Sandbox did not verify user-provided command: $($verification.Message)") | Out-Null
+                    Write-AppGetterLog -Message "User-provided command was not Sandbox-verified: $($verification.Message)" `
+                        -Level Warning -OnProgress $OnProgress
+                }
+            }
+
+            $switchDiscoveryResult = [PSCustomObject]@{
+                RecommendedCommand   = $installerInstallCommand
+                AlternativeCommands  = @()
+                ConfidenceScore      = if ($verified) { 100 } else { 90 }
+                EvidenceSummary      = @($evidence)
+                NeedsManualReview    = -not $verified
+                Verified             = $verified
+                InstallerFamily      = 'user-provided'
+                PrimaryType          = 'manual'
+                Fingerprint          = $null
+                Candidates           = @()
+                Verification         = $verification
+                VerificationAttempts = @()
+                InstallerHash        = $installerHash
+                UsedCache            = $false
+            }
         }
 
         Write-AppGetterProgress -Step 7 -TotalSteps $totalSteps -StepName 'Generating install.ps1' -Percent 48 -OnProgress $OnProgress
