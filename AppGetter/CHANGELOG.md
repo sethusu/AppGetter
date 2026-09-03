@@ -2,6 +2,14 @@
 
 ## Version 2.3.0 - Unreleased
 
+### Licensing field and license-pattern discovery
+- New **License type** field for every package, modeled on the ServiceNow software-model licensing field: Per User, Per Device, Site License, Subscription, Freeware, Open Source, Trial / Evaluation
+- `-LicenseType` (plus `-LicenseName`, `-LicenseUrl`, `-LicenseNotes`) on the CLI and `Invoke-AppGetterPackaging`; License type dropdown and License notes box in the GUI. Values ingested from ServiceNow are normalized (e.g. "per seat" → Per User, "GPLv3" → Open Source) via `ConvertTo-AppGetterLicenseType`
+- When no license type is provided, AppGetter **identifies the licensing pattern** from the application's website/developer/support pages (and any linked license/EULA page): named open-source licenses (MIT, GPL, Apache, BSD...), freeware wording, per-user/per-device/site/subscription/trial pricing language — scored with evidence and a manual-review flag, mirroring silent-switch discovery (`Resolve-AppGetterLicenseInfo`)
+- License info is applied to the whole package: `app.json` gains `licenseType` + a `licensing` block (type, name, URL, notes, source, confidence, evidence), `README.md` gains License rows and a Licensing section, `readme.txt` a License type line, and the Intune `win32LobApp.json` notes field carries `License: <type>`
+- New packaging step "Identify licensing pattern" (step 11 of 14) in CLI and GUI progress
+- Pester coverage: `Tests/Licensing.Tests.ps1` (Linux-safe, offline via `-PageText`)
+
 ### Silent switch Sandbox research
 - Added Windows Sandbox **candidate trials** during discovery (`Test-InstallerCommandInSandbox`) that prove silence (no installer UI), accepted exit codes, and new ARP install evidence — not just post-package success
 - Packaging can force trials with `-VerifySilentSwitches` (CLI/GUI); trials also auto-run when static confidence is low/ambiguous and Sandbox is available

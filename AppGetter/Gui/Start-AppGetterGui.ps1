@@ -195,6 +195,7 @@ $script:StepLabels = @(
     'Generate detection.ps1'
     'Generate uninstall.ps1'
     'Resolve application icon'
+    'Identify licensing pattern'
     'Write metadata and README.md'
     'Create .intunewin package'
     'Finalize output'
@@ -316,7 +317,7 @@ function Start-AppGetterBackgroundPackaging {
             OutputPath = $PackArguments.OutputPath
             OnProgress = $onProgress
         }
-        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath')) {
+        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'LicenseType', 'LicenseName', 'LicenseUrl', 'LicenseNotes', 'IconPath')) {
             if ($PackArguments[$key]) { $params[$key] = $PackArguments[$key] }
         }
         if ($PackArguments.ContainsKey('VerifySilentSwitches') -and $PackArguments.VerifySilentSwitches) {
@@ -730,6 +731,8 @@ $browseInstallerButton = $window.FindName('BrowseInstallerButton')
 $developerUrlBox = $window.FindName('DeveloperUrlBox')
 $supportUrlBox = $window.FindName('SupportUrlBox')
 $versionBox = $window.FindName('VersionBox')
+$licenseTypeBox = $window.FindName('LicenseTypeBox')
+$licenseNotesBox = $window.FindName('LicenseNotesBox')
 $outputPathBox = $window.FindName('OutputPathBox')
 $browseOutputButton = $window.FindName('BrowseOutputButton')
 $verifySilentSwitchesCheckBox = $window.FindName('VerifySilentSwitchesCheckBox')
@@ -755,7 +758,7 @@ $script:contentPrepInstallJob = $null
 $script:contentPrepInstallTimer = $null
 
 $stepMap = @{
-    1 = 0; 2 = 1; 3 = 2; 4 = 3; 5 = 4; 6 = 5; 7 = 6; 8 = 7; 9 = 8; 10 = 9; 11 = 10; 12 = 11; 13 = 12
+    1 = 0; 2 = 1; 3 = 2; 4 = 3; 5 = 4; 6 = 5; 7 = 6; 8 = 7; 9 = 8; 10 = 9; 11 = 10; 12 = 11; 13 = 12; 14 = 13
 }
 
 $settings = Get-AppGetterSettings
@@ -765,6 +768,11 @@ $appNameBox.Text = $settings.LastAppName
 $websiteUrlBox.Text = $settings.LastWebsiteUrl
 $downloadUrlBox.Text = $settings.LastDownloadUrl
 $installerPathBox.Text = $settings.LastInstallerPath
+if ($licenseTypeBox) {
+    foreach ($licenseType in (Get-AppGetterLicenseTypes)) {
+        [void]$licenseTypeBox.Items.Add($licenseType)
+    }
+}
 Initialize-StepList -ListControl $stepList
 
 function Update-OutputPathForApp {
@@ -990,6 +998,8 @@ function Set-PackControlsEnabled {
     $developerUrlBox.IsEnabled = $Enabled
     $supportUrlBox.IsEnabled = $Enabled
     $versionBox.IsEnabled = $Enabled
+    if ($licenseTypeBox) { $licenseTypeBox.IsEnabled = $Enabled }
+    if ($licenseNotesBox) { $licenseNotesBox.IsEnabled = $Enabled }
     $browseOutputButton.IsEnabled = $Enabled
     $browseIconButton.IsEnabled = $Enabled
     if ($verifySilentSwitchesCheckBox) {
@@ -1128,6 +1138,8 @@ function Start-AppGetterPackagingFromUi {
         SupportUrl    = $supportUrlBox.Text.Trim()
         Version       = $versionBox.Text.Trim()
         Publisher     = $publisherBox.Text.Trim()
+        LicenseType   = $(if ($licenseTypeBox) { ([string]$licenseTypeBox.Text).Trim() } else { '' })
+        LicenseNotes  = $(if ($licenseNotesBox) { $licenseNotesBox.Text.Trim() } else { '' })
         OutputPath    = $script:baseOutputPath
         IconPath      = $script:customIconPath
         VerifySilentSwitches = [bool]($verifySilentSwitchesCheckBox -and $verifySilentSwitchesCheckBox.IsChecked)

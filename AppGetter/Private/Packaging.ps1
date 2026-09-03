@@ -10,6 +10,10 @@ function Invoke-AppGetterPackaging {
         [string]$SupportUrl,
         [string]$Version,
         [string]$Publisher,
+        [string]$LicenseType,
+        [string]$LicenseName,
+        [string]$LicenseUrl,
+        [string]$LicenseNotes,
         [string]$OutputPath = (Get-AppGetterSettings).OutputPath,
         [string]$IconPath,
         [string]$InstallCommand,
@@ -18,7 +22,7 @@ function Invoke-AppGetterPackaging {
         [scriptblock]$OnProgress
     )
 
-    $totalSteps = 13
+    $totalSteps = 14
     $versionDirectory = $null
     $failureLogPath = $null
     $intunewinFile = $null
@@ -158,21 +162,28 @@ function Invoke-AppGetterPackaging {
             -LogoFilePath $logoFilePath -IconFilePath $iconFilePath -IconPath $IconPath `
             -InstallerPath $installerFile.FullName -OnProgress $OnProgress
 
-        Write-AppGetterProgress -Step 11 -TotalSteps $totalSteps -StepName 'Writing metadata' -Percent 83 -OnProgress $OnProgress
+        Write-AppGetterProgress -Step 11 -TotalSteps $totalSteps -StepName 'Identifying licensing pattern' -Percent 80 `
+            -Message $AppName -OnProgress $OnProgress
+        $licenseInfo = Resolve-AppGetterLicenseInfo -AppName $AppName `
+            -LicenseType $LicenseType -LicenseName $LicenseName -LicenseUrl $LicenseUrl -LicenseNotes $LicenseNotes `
+            -WebsiteUrl $WebsiteUrl -DeveloperUrl $DeveloperUrl -SupportUrl $SupportUrl -OnProgress $OnProgress
+
+        Write-AppGetterProgress -Step 12 -TotalSteps $totalSteps -StepName 'Writing metadata' -Percent 85 -OnProgress $OnProgress
         $metadata = New-AppGetterMetadataFiles -PackageDetails $details -VersionDirectory $versionDirectory `
             -InstallerFileName $installerFile.Name -InstallerHash $installerHash `
             -InstallerInstallCommand $installerInstallCommand -DetectionScript $detectionScript `
             -InstallScript $installScript -UninstallScript $uninstallScript -IconFilePath $iconFilePath `
-            -FinalDownloadUrl $finalDownloadUrl -SwitchDiscoveryResult $switchDiscoveryResult
+            -FinalDownloadUrl $finalDownloadUrl -SwitchDiscoveryResult $switchDiscoveryResult `
+            -LicenseInfo $licenseInfo
 
-        Write-AppGetterProgress -Step 12 -TotalSteps $totalSteps -StepName 'Packaging .intunewin' -Percent 90 -OnProgress $OnProgress
+        Write-AppGetterProgress -Step 13 -TotalSteps $totalSteps -StepName 'Packaging .intunewin' -Percent 90 -OnProgress $OnProgress
         $contentPrepPath = Resolve-ContentPrepToolPath
         $packagingSucceeded = $false
 
         if (-not $contentPrepPath) {
             Write-AppGetterLog -Message 'intunewinapputil not found. Use Install-AppGetterContentPrepTool or install Microsoft Win32 Content Prep Tool and ensure it is on PATH.' `
                 -Level Warning -OnProgress $OnProgress
-            Write-AppGetterProgress -Step 13 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
+            Write-AppGetterProgress -Step 14 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
                 -Message 'Metadata created, but Content Prep Tool is unavailable.' -Status Completed -OnProgress $OnProgress
         } else {
             $outputDirectory = Split-Path $versionDirectory -Parent
@@ -186,7 +197,7 @@ function Invoke-AppGetterPackaging {
                 if ($LASTEXITCODE -eq 0 -and (Test-Path $intunewinFile)) {
                     $packagingSucceeded = $true
                     $intunewinSize = [math]::Round((Get-Item $intunewinFile).Length / 1MB, 2)
-                    Write-AppGetterProgress -Step 13 -TotalSteps $totalSteps -StepName 'Complete' -Percent 100 `
+                    Write-AppGetterProgress -Step 14 -TotalSteps $totalSteps -StepName 'Complete' -Percent 100 `
                         -Message "Created $intunewinFile ($intunewinSize MB)" -Status Completed -OnProgress $OnProgress
                 } else {
                     throw 'Content Prep Tool failed or output file was not created.'
@@ -194,7 +205,7 @@ function Invoke-AppGetterPackaging {
             } catch {
                 Write-AppGetterLog -Message "Failed to create IntuneWin package: $_" -Level Warning -OnProgress $OnProgress
                 Write-AppGetterFailureLog -LogPath $failureLogPath -Step 'Packaging .intunewin' -ErrorRecord $_
-                Write-AppGetterProgress -Step 13 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
+                Write-AppGetterProgress -Step 14 -TotalSteps $totalSteps -StepName 'Complete with warnings' -Percent 100 `
                     -Message 'Metadata created, but .intunewin packaging failed.' -Status Completed -OnProgress $OnProgress
             }
         }
@@ -216,6 +227,7 @@ function Invoke-AppGetterPackaging {
             LogoFile             = if (Test-Path $logoFilePath) { $logoFilePath } else { $null }
             InstallerFile        = $installerFile.FullName
             FinalDownloadUrl     = $finalDownloadUrl
+            License              = $licenseInfo
             Metadata             = $metadata
             Details              = $details
         }

@@ -16,6 +16,18 @@
     Optional. Specific version to use.
 .PARAMETER Publisher
     Optional. Publisher name.
+.PARAMETER LicenseType
+    Optional. Licensing pattern for the application, e.g. the value from the
+    ServiceNow licensing field (Per User, Per Device, Site License, Subscription,
+    Freeware, Open Source, Trial / Evaluation). Common aliases such as
+    "per seat" or "GPL" are normalized automatically. When omitted, AppGetter
+    identifies the licensing pattern from the application's web pages.
+.PARAMETER LicenseName
+    Optional. Specific license name (e.g. "MIT License").
+.PARAMETER LicenseUrl
+    Optional. URL of the license/EULA page. Auto-discovered when omitted.
+.PARAMETER LicenseNotes
+    Optional. Free-form licensing notes carried into the package metadata.
 .PARAMETER DeveloperUrl
     Optional. Developer or publisher website URL.
 .PARAMETER SupportUrl
@@ -40,6 +52,8 @@
 .EXAMPLE
     .\Create-IntuneWinFromWeb.ps1 -InstallerPath "C:\Installers\setup.exe" -AppName "MyApp"
 .EXAMPLE
+    .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/installer.msi" -AppName "MyApp" -LicenseType "Per User"
+.EXAMPLE
     .\Create-IntuneWinFromWeb.ps1 -UseGui
 #>
 
@@ -62,6 +76,18 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$Publisher,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicenseType,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicenseName,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicenseUrl,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicenseNotes,
 
     [Parameter(Mandatory = $false)]
     [string]$DeveloperUrl,
@@ -223,6 +249,10 @@ try {
         SupportUrl    = $SupportUrl
         Version       = $Version
         Publisher     = $Publisher
+        LicenseType   = $LicenseType
+        LicenseName   = $LicenseName
+        LicenseUrl    = $LicenseUrl
+        LicenseNotes  = $LicenseNotes
         OutputPath    = $OutputPath
         IconPath      = $IconPath
         InstallCommand = $InstallCommand
@@ -240,6 +270,11 @@ try {
     }
 
     $intuneWinLine = if ($result.IntuneWinFile) { $result.IntuneWinFile } else { '(not created)' }
+    $licenseLine = if ($result.License) {
+        "$($result.License.LicenseType) ($($result.License.Source), confidence $($result.License.ConfidenceScore)/100)"
+    } else {
+        'Unknown'
+    }
     Write-Host @"
 
 Package Details:
@@ -247,6 +282,7 @@ Package Details:
 - Package ID: $($result.PackageId)
 - Version: $($result.Version)
 - Publisher: $($result.Publisher)
+- License: $licenseLine
 - Installer Source: $($result.FinalDownloadUrl)
 - Output Directory: $($result.VersionDirectory)
 - IntuneWin Package: $intuneWinLine
