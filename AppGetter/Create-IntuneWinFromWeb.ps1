@@ -26,6 +26,23 @@
     Optional. Path to a custom PNG icon.
 .PARAMETER InstallCommand
     Optional. Custom install command.
+.PARAMETER LicenseInfo
+    Optional. The licensing text ingested from the ServiceNow software record. AppGetter
+    classifies it into a licensing pattern and applies that pattern to the package.
+.PARAMETER LicenseType
+    Optional. Explicit ServiceNow license type (for example 'Per device', 'Concurrent',
+    'Freeware') that overrides classification from LicenseInfo.
+.PARAMETER LicenseKey
+    Optional. License key to apply. Overrides a key parsed out of LicenseInfo.
+.PARAMETER LicenseServer
+    Optional. License server as port@host for concurrent/floating licensing.
+.PARAMETER LicenseServerVariable
+    Optional. Environment variable the client reads to find the license server
+    (defaults to the vendor variable detected in the installer, else LM_LICENSE_FILE).
+.PARAMETER LicenseFilePath
+    Optional. License file to ship inside the package and stage during install.
+.PARAMETER LicenseFileTargetPath
+    Optional. Absolute path the license file is copied to on the target device.
 .PARAMETER VerifySilentSwitches
     Optional. Run ranked silent-install candidates in Windows Sandbox during packaging
     (also auto-runs when static confidence is low and Sandbox is available).
@@ -39,6 +56,12 @@
     .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/installer.exe" -AppName "MyApp"
 .EXAMPLE
     .\Create-IntuneWinFromWeb.ps1 -InstallerPath "C:\Installers\setup.exe" -AppName "MyApp"
+.EXAMPLE
+    .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/setup.msi" -AppName "MyApp" `
+        -LicenseInfo "Licensed - per device perpetual, 25 seats, license key 4XJ9-2210-KD77-9931"
+.EXAMPLE
+    .\Create-IntuneWinFromWeb.ps1 -InstallerPath "C:\Installers\sim.exe" -AppName "SIMION" `
+        -LicenseInfo "Concurrent FlexLM, license server 27000@lm.corp.local"
 .EXAMPLE
     .\Create-IntuneWinFromWeb.ps1 -UseGui
 #>
@@ -77,6 +100,27 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$InstallCommand,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicenseInfo,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicenseType,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicenseKey,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicenseServer,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicenseServerVariable,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicenseFilePath,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicenseFileTargetPath,
 
     [Parameter(Mandatory = $false)]
     [switch]$VerifySilentSwitches,
@@ -226,6 +270,13 @@ try {
         OutputPath    = $OutputPath
         IconPath      = $IconPath
         InstallCommand = $InstallCommand
+        LicenseInfo   = $LicenseInfo
+        LicenseType   = $LicenseType
+        LicenseKey    = $LicenseKey
+        LicenseServer = $LicenseServer
+        LicenseServerVariable = $LicenseServerVariable
+        LicenseFilePath       = $LicenseFilePath
+        LicenseFileTargetPath = $LicenseFileTargetPath
         OnProgress    = $onProgress
     }
     if ($VerifySilentSwitches) {
@@ -240,6 +291,20 @@ try {
     }
 
     $intuneWinLine = if ($result.IntuneWinFile) { $result.IntuneWinFile } else { '(not created)' }
+    $licensingLines = ''
+    if ($result.Licensing -and $result.Licensing.Classified) {
+        $licensingLines = @"
+
+Licensing:
+- Pattern: $($result.Licensing.PatternName) ($($result.Licensing.PatternId))
+- License type: $($result.Licensing.LicenseType)
+- Activation: $($result.Licensing.ActivationMethod)
+- Confidence: $($result.Licensing.ConfidenceScore)/100
+- Recommended Intune assignment: $($result.Licensing.AssignmentRecommendation)
+- Manual review recommended: $(if ($result.Licensing.NeedsManualReview) { 'Yes' } else { 'No' })
+"@
+    }
+
     Write-Host @"
 
 Package Details:
@@ -250,7 +315,7 @@ Package Details:
 - Installer Source: $($result.FinalDownloadUrl)
 - Output Directory: $($result.VersionDirectory)
 - IntuneWin Package: $intuneWinLine
-
+$licensingLines
 Files Created:
 - install.ps1
 - detection.ps1
@@ -259,6 +324,7 @@ Files Created:
 - readme.txt
 - app.json
 - win32LobApp.json
+- licensing.json (when a licensing field was supplied)
 - icon.png (if available)
 - appgetter-packaging.log (on failure)
 

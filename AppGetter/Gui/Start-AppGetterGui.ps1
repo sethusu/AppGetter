@@ -191,6 +191,7 @@ $script:StepLabels = @(
     'Download or copy installer'
     'Calculate installer hash'
     'Discover silent install switches'
+    'Identify licensing pattern'
     'Generate install.ps1'
     'Generate detection.ps1'
     'Generate uninstall.ps1'
@@ -316,7 +317,12 @@ function Start-AppGetterBackgroundPackaging {
             OutputPath = $PackArguments.OutputPath
             OnProgress = $onProgress
         }
-        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath')) {
+        $optionalKeys = @(
+            'WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath',
+            'LicenseInfo', 'LicenseType', 'LicenseKey', 'LicenseServer', 'LicenseServerVariable',
+            'LicenseFilePath', 'LicenseFileTargetPath'
+        )
+        foreach ($key in $optionalKeys) {
             if ($PackArguments[$key]) { $params[$key] = $PackArguments[$key] }
         }
         if ($PackArguments.ContainsKey('VerifySilentSwitches') -and $PackArguments.VerifySilentSwitches) {
@@ -730,6 +736,13 @@ $browseInstallerButton = $window.FindName('BrowseInstallerButton')
 $developerUrlBox = $window.FindName('DeveloperUrlBox')
 $supportUrlBox = $window.FindName('SupportUrlBox')
 $versionBox = $window.FindName('VersionBox')
+$licenseInfoBox = $window.FindName('LicenseInfoBox')
+$licenseTypeCombo = $window.FindName('LicenseTypeCombo')
+$licenseKeyBox = $window.FindName('LicenseKeyBox')
+$licenseServerBox = $window.FindName('LicenseServerBox')
+$licenseFileBox = $window.FindName('LicenseFileBox')
+$browseLicenseFileButton = $window.FindName('BrowseLicenseFileButton')
+$licensingStatusText = $window.FindName('LicensingStatusText')
 $outputPathBox = $window.FindName('OutputPathBox')
 $browseOutputButton = $window.FindName('BrowseOutputButton')
 $verifySilentSwitchesCheckBox = $window.FindName('VerifySilentSwitchesCheckBox')
@@ -755,7 +768,7 @@ $script:contentPrepInstallJob = $null
 $script:contentPrepInstallTimer = $null
 
 $stepMap = @{
-    1 = 0; 2 = 1; 3 = 2; 4 = 3; 5 = 4; 6 = 5; 7 = 6; 8 = 7; 9 = 8; 10 = 9; 11 = 10; 12 = 11; 13 = 12
+    1 = 0; 2 = 1; 3 = 2; 4 = 3; 5 = 4; 6 = 5; 7 = 6; 8 = 7; 9 = 8; 10 = 9; 11 = 10; 12 = 11; 13 = 12; 14 = 13
 }
 
 $settings = Get-AppGetterSettings
@@ -777,6 +790,85 @@ function Update-OutputPathForApp {
 }
 
 Update-OutputPathForApp
+
+$script:autoDetectLicenseTypeLabel = 'Auto-detect from licensing field'
+
+function Initialize-LicenseTypeChoices {
+    if (-not $licenseTypeCombo) { return }
+    $licenseTypeCombo.Items.Clear()
+    $licenseTypeCombo.Items.Add($script:autoDetectLicenseTypeLabel) | Out-Null
+    foreach ($pattern in (Get-AppGetterLicensingPatternCatalog)) {
+        $licenseTypeCombo.Items.Add($pattern.LicenseType) | Out-Null
+    }
+    $licenseTypeCombo.SelectedIndex = 0
+}
+
+function Get-LicenseTypeFromUi {
+    if (-not $licenseTypeCombo) { return '' }
+    $value = ''
+    if ($licenseTypeCombo.Text) {
+        $value = ([string]$licenseTypeCombo.Text).Trim()
+    }
+    if ($value -eq $script:autoDetectLicenseTypeLabel) {
+        return ''
+    }
+    return $value
+}
+
+function Get-LicensingArgumentsFromUi {
+    $arguments = @{
+        LicenseInfo   = ''
+        LicenseType   = Get-LicenseTypeFromUi
+        LicenseKey    = ''
+        LicenseServer = ''
+    }
+    if ($licenseInfoBox -and $licenseInfoBox.Text) { $arguments.LicenseInfo = $licenseInfoBox.Text.Trim() }
+    if ($licenseKeyBox -and $licenseKeyBox.Text) { $arguments.LicenseKey = $licenseKeyBox.Text.Trim() }
+    if ($licenseServerBox -and $licenseServerBox.Text) { $arguments.LicenseServer = $licenseServerBox.Text.Trim() }
+    return $arguments
+}
+
+function Update-LicensingPreview {
+    if (-not $licensingStatusText) { return }
+
+    $arguments = Get-LicensingArgumentsFromUi
+    $licenseFilePath = ''
+    if ($licenseFileBox -and $licenseFileBox.Text) { $licenseFilePath = $licenseFileBox.Text.Trim() }
+
+    $hasAnyInput = $arguments.LicenseInfo -or $arguments.LicenseType -or $arguments.LicenseKey -or
+        $arguments.LicenseServer -or $licenseFilePath
+    if (-not $hasAnyInput) {
+        $licensingStatusText.Text = 'Licensing: paste the ServiceNow licensing field above and AppGetter will identify the pattern.'
+        $licensingStatusText.Foreground = ConvertTo-WpfBrush '#5C6B7A'
+        return
+    }
+
+    try {
+        # Text-only resolution: no installer is read, so this is safe to run while typing.
+        if ($licenseFilePath) { $arguments.LicenseFilePath = $licenseFilePath }
+        $licensing = Resolve-AppGetterLicensing @arguments
+
+        $detail = "Licensing: $($licensing.PatternName) | activation: $($licensing.ActivationMethod) | confidence: $($licensing.ConfidenceScore)/100 | suggested assignment: $($licensing.AssignmentRecommendation)"
+        if ($licensing.MissingArtifacts.Count -gt 0) {
+            $detail = "$detail | still needed: $($licensing.MissingArtifacts -join ', ')"
+        }
+
+        $licensingStatusText.Text = $detail
+        $licensingStatusText.Foreground = if (-not $licensing.Classified -or $licensing.PatternId -eq 'unknown') {
+            ConvertTo-WpfBrush '#C62828'
+        } elseif ($licensing.NeedsManualReview) {
+            ConvertTo-WpfBrush '#B26A00'
+        } else {
+            ConvertTo-WpfBrush '#2E7D32'
+        }
+    } catch {
+        $licensingStatusText.Text = "Licensing: could not classify the licensing field ($($_.Exception.Message))."
+        $licensingStatusText.Foreground = ConvertTo-WpfBrush '#C62828'
+    }
+}
+
+Initialize-LicenseTypeChoices
+Update-LicensingPreview
 
 function Update-PrereqStatusDisplay {
     param(
@@ -990,6 +1082,12 @@ function Set-PackControlsEnabled {
     $developerUrlBox.IsEnabled = $Enabled
     $supportUrlBox.IsEnabled = $Enabled
     $versionBox.IsEnabled = $Enabled
+    $licenseInfoBox.IsEnabled = $Enabled
+    $licenseTypeCombo.IsEnabled = $Enabled
+    $licenseKeyBox.IsEnabled = $Enabled
+    $licenseServerBox.IsEnabled = $Enabled
+    $licenseFileBox.IsEnabled = $Enabled
+    $browseLicenseFileButton.IsEnabled = $Enabled
     $browseOutputButton.IsEnabled = $Enabled
     $browseIconButton.IsEnabled = $Enabled
     if ($verifySilentSwitchesCheckBox) {
@@ -1058,6 +1156,20 @@ function Complete-AppGetterPackaging {
 
     Update-SandboxTestButtonState
 
+    if ($Result.Licensing -and $Result.Licensing.Classified) {
+        $licensing = $Result.Licensing
+        $licensingStatusText.Text = "Licensing applied: $($licensing.PatternName) | activation: $($licensing.ActivationMethod) | confidence: $($licensing.ConfidenceScore)/100 | assign as: $($licensing.AssignmentRecommendation)"
+        $licensingStatusText.Foreground = if ($licensing.NeedsManualReview) {
+            ConvertTo-WpfBrush '#B26A00'
+        } else {
+            ConvertTo-WpfBrush '#2E7D32'
+        }
+        Add-LogLine -LogControl $logText -Message "Licensing pattern: $($licensing.PatternName) (activation $($licensing.ActivationMethod), confidence $($licensing.ConfidenceScore)/100)"
+        foreach ($note in @($licensing.ComplianceNotes)) {
+            Add-LogLine -LogControl $logText -Message "Licensing note: $note"
+        }
+    }
+
     if ($Result.PackagingSucceeded) {
         $progressStatus.Text = 'Packaging completed successfully.'
         Add-LogLine -LogControl $logText -Message "Success: $($Result.IntuneWinFile)"
@@ -1086,6 +1198,10 @@ function Start-AppGetterPackagingFromUi {
     $websiteUrl = $websiteUrlBox.Text.Trim()
     $downloadUrl = $downloadUrlBox.Text.Trim()
     $installerPath = $installerPathBox.Text.Trim()
+    $licenseFilePath = ''
+    if ($licenseFileBox -and $licenseFileBox.Text) {
+        $licenseFilePath = $licenseFileBox.Text.Trim()
+    }
 
     if ([string]::IsNullOrWhiteSpace($appName)) {
         [System.Windows.MessageBox]::Show($window, 'Application name is required.', 'AppGetter', 'OK', 'Warning') | Out-Null
@@ -1099,6 +1215,11 @@ function Start-AppGetterPackagingFromUi {
 
     if ($installerPath -and -not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
         [System.Windows.MessageBox]::Show($window, "Installer file not found:`n$installerPath", 'AppGetter', 'OK', 'Warning') | Out-Null
+        return
+    }
+
+    if ($licenseFilePath -and -not (Test-Path -LiteralPath $licenseFilePath -PathType Leaf)) {
+        [System.Windows.MessageBox]::Show($window, "License file not found:`n$licenseFilePath", 'AppGetter', 'OK', 'Warning') | Out-Null
         return
     }
 
@@ -1119,6 +1240,7 @@ function Start-AppGetterPackagingFromUi {
     $outputPathBox.Text = Get-AppGetterAppOutputPath -BasePath $script:baseOutputPath -PackageId $packageId
     Save-AppGetterSettings -OutputPath $script:baseOutputPath -PackageId $packageId
 
+    $licensingArguments = Get-LicensingArgumentsFromUi
     $packArguments = @{
         AppName       = $appName
         WebsiteUrl    = $websiteUrl
@@ -1130,6 +1252,11 @@ function Start-AppGetterPackagingFromUi {
         Publisher     = $publisherBox.Text.Trim()
         OutputPath    = $script:baseOutputPath
         IconPath      = $script:customIconPath
+        LicenseInfo   = $licensingArguments.LicenseInfo
+        LicenseType   = $licensingArguments.LicenseType
+        LicenseKey    = $licensingArguments.LicenseKey
+        LicenseServer = $licensingArguments.LicenseServer
+        LicenseFilePath = $licenseFilePath
         VerifySilentSwitches = [bool]($verifySilentSwitchesCheckBox -and $verifySilentSwitchesCheckBox.IsChecked)
     }
 
@@ -1174,6 +1301,65 @@ function Start-AppGetterPackagingFromUi {
 $appNameBox.Add_LostFocus({
     if (-not $script:isRunning) {
         Update-OutputPathForApp
+    }
+})
+
+$licenseInfoBox.Add_TextChanged({
+    if (-not $script:isRunning) {
+        Update-LicensingPreview
+    }
+})
+
+$licenseTypeCombo.Add_SelectionChanged({
+    if (-not $script:isRunning) {
+        Update-LicensingPreview
+    }
+})
+
+$licenseTypeCombo.Add_LostFocus({
+    if (-not $script:isRunning) {
+        Update-LicensingPreview
+    }
+})
+
+$licenseKeyBox.Add_LostFocus({
+    if (-not $script:isRunning) {
+        Update-LicensingPreview
+    }
+})
+
+$licenseServerBox.Add_LostFocus({
+    if (-not $script:isRunning) {
+        Update-LicensingPreview
+    }
+})
+
+$licenseFileBox.Add_LostFocus({
+    if (-not $script:isRunning) {
+        Update-LicensingPreview
+    }
+})
+
+$browseLicenseFileButton.Add_Click({
+    try {
+        $path = Show-OpenFileDialog `
+            -Filter 'License files (*.lic;*.dat;*.key;*.txt)|*.lic;*.dat;*.key;*.txt|All files (*.*)|*.*' `
+            -Title 'Select the license file to ship inside the package' `
+            -OwnerWindow $window
+        if ($path) {
+            $licenseFileBox.Text = $path
+            Add-LogLine -LogControl $logText -Message "License file selected: $path"
+            Update-LicensingPreview
+        }
+    } catch {
+        Add-LogLine -LogControl $logText -Message "License file browser failed: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show(
+            $window,
+            "Could not open the file browser.`n`n$($_.Exception.Message)",
+            'AppGetter',
+            'OK',
+            'Error'
+        ) | Out-Null
     }
 })
 

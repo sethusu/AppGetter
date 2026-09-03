@@ -3,8 +3,36 @@ function New-AppGetterInstallScript {
         [string]$PackageId,
         [string]$DisplayName,
         [string]$Version,
-        [string]$InstallCommand
+        [string]$InstallCommand,
+        [string]$LicensingStage,
+        [string[]]$RedactValues
     )
+
+    $licensingBlock = ''
+    if (-not [string]::IsNullOrWhiteSpace($LicensingStage)) {
+        $licensingBlock = @"
+
+$LicensingStage
+
+"@
+    }
+
+    # Keys embedded in the install command must not land in the Intune transcript.
+    $secrets = @($RedactValues | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $commandLogExpression = '$installCommand'
+    $redactionBlock = ''
+    if ($secrets.Count -gt 0) {
+        $secretLiterals = ($secrets | ForEach-Object { "'$(ConvertTo-AppGetterScriptLiteral -Value $_)'" }) -join ', '
+        $commandLogExpression = '$loggedCommand'
+        $redactionBlock = @"
+
+    `$sensitiveValues = @($secretLiterals)
+    `$loggedCommand = `$installCommand
+    foreach (`$sensitiveValue in `$sensitiveValues) {
+        `$loggedCommand = `$loggedCommand.Replace(`$sensitiveValue, '***REDACTED***')
+    }
+"@
+    }
 
     return @"
 # Install script for $DisplayName
@@ -26,8 +54,8 @@ try {
     `$installCommand = @'
 $InstallCommand
 '@
-
-    Write-Host "Executing install command: `$installCommand"
+$licensingBlock$redactionBlock
+    Write-Host "Executing install command: $commandLogExpression"
     `$process = Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `$installCommand" -Wait -PassThru -NoNewWindow
 
     switch (`$process.ExitCode) {
@@ -245,11 +273,101 @@ function New-AppGetterReadmeMarkdown {
         [string]$FinalDownloadUrl,
         [string]$DetectionType,
         [bool]$HasIcon,
-        [pscustomobject]$SwitchDiscoveryResult
+        [pscustomobject]$SwitchDiscoveryResult,
+        [pscustomobject]$Licensing
     )
 
     $generatedAt = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $installCommandLine = Get-IntuneInstallCommandLine
+
+    $licensingRows = ''
+    $licensingSection = ''
+    if ($Licensing -and $Licensing.Classified) {
+        $assignmentLabel = switch ($Licensing.AssignmentRecommendation) {
+            'required' { 'Required (license covers the assigned devices/users)' }
+            'available' { 'Available for enrolled devices (self-service, license checked first)' }
+            default { $Licensing.AssignmentRecommendation }
+        }
+
+        # Trailing newline keeps the row list glued to the Intune reference table.
+        $licensingRows = @"
+| **License type** | $($Licensing.LicenseType) |
+| **Activation method** | $($Licensing.ActivationMethod) |
+| **Assignment type** | $assignmentLabel |
+
+"@
+
+        $licensingEvidenceLines = ($Licensing.EvidenceSummary | ForEach-Object { "- $_" }) -join "`n"
+        $licensingNoteLines = if ($Licensing.ComplianceNotes.Count -gt 0) {
+            ($Licensing.ComplianceNotes | ForEach-Object { "- $_" }) -join "`n"
+        } else {
+            '- None'
+        }
+
+        $appliedLines = [System.Collections.Generic.List[string]]::new()
+        if ($Licensing.AppliedToInstallCommand) {
+            $appliedLines.Add("- License key applied at install time through the ``$($Licensing.LicenseKeyPropertyName)`` installer property (redacted in logs).") | Out-Null
+        } elseif ($Licensing.HasLicenseKey) {
+            $appliedLines.Add('- A license key is on file but the installer does not accept it on the command line; activate after install.') | Out-Null
+        }
+        if ($Licensing.PackagedLicenseFile) {
+            $target = if ($Licensing.LicenseFileTargetPath) { $Licensing.LicenseFileTargetPath } else { '%ProgramData%\AppGetter\Licenses' }
+            $appliedLines.Add("- License file ``$($Licensing.PackagedLicenseFile)`` ships inside the package and is copied to ``$target`` before install.") | Out-Null
+        }
+        if ($Licensing.LicenseServer) {
+            $appliedLines.Add("- ``$($Licensing.LicenseServerVariable)`` is set machine-wide to ``$($Licensing.LicenseServer)`` before install.") | Out-Null
+        }
+        if ($Licensing.ActivationMethod -eq 'signin') {
+            $appliedLines.Add('- No key is baked in; the product activates when the assigned user signs in.') | Out-Null
+        }
+        if ($appliedLines.Count -eq 0) {
+            $appliedLines.Add('- No install-time licensing action was required for this pattern.') | Out-Null
+        }
+
+        $reviewLabel = if ($Licensing.NeedsManualReview) { 'Yes' } else { 'No' }
+        $quantityLabel = if ($Licensing.LicenseQuantity) { $Licensing.LicenseQuantity } else { 'Not stated' }
+        $expiryLabel = if ($Licensing.LicenseExpiry) { $Licensing.LicenseExpiry } else { 'Not stated' }
+
+        $licensingSection = @"
+
+## Licensing
+
+Identified from the licensing field on the ServiceNow software record.
+
+| Field | Value |
+|---|---|
+| **Pattern** | $($Licensing.PatternName) (``$($Licensing.PatternId)``) |
+| **License type** | $($Licensing.LicenseType) |
+| **Activation method** | $($Licensing.ActivationMethod) |
+| **Activation required** | $(if ($Licensing.RequiresActivation) { 'Yes' } else { 'No' }) |
+| **Confidence score** | $($Licensing.ConfidenceScore) / 100 |
+| **Manual review recommended** | $reviewLabel |
+| **Entitlement quantity** | $quantityLabel |
+| **Entitlement expiry** | $expiryLabel |
+| **Recommended Intune assignment** | $assignmentLabel |
+
+$($Licensing.Guidance)
+
+**Applied to this package:**
+
+$($appliedLines -join "`n")
+
+**Licensing evidence:**
+
+$licensingEvidenceLines
+
+**Compliance notes:**
+
+$licensingNoteLines
+
+**Licensing field as ingested:**
+
+``````text
+$($Licensing.RedactedLicenseInfo)
+``````
+
+"@
+    }
 
     $switchDiscoverySection = ''
     if ($SwitchDiscoveryResult) {
@@ -304,7 +422,7 @@ Use this section when creating or reviewing the Win32 app in the Microsoft Intun
 | **Description** | $($PackageDetails.Description) |
 | **Publisher** | $($PackageDetails.Publisher) |
 | **Developer** | $($PackageDetails.Developer) |
-| **App version / Display version** | $($PackageDetails.Version) |
+$licensingRows| **App version / Display version** | $($PackageDetails.Version) |
 | **Package ID** | ``$($PackageDetails.PackageId)`` |
 | **Information URL** | $($PackageDetails.Homepage) |
 | **Download URL** | $FinalDownloadUrl |
@@ -322,7 +440,7 @@ Use this section when creating or reviewing the Win32 app in the Microsoft Intun
 | **Return codes** | 0, 1707 (success); 3010, 1641 (reboot); 1618 (retry) |
 | **Icon included** | $(if ($HasIcon) { 'Yes (`icon.png`)' } else { 'No' }) |
 | **Notes** | Generated by AppGetter [Web\|$($PackageDetails.PackageId)] |
-
+$licensingSection
 $switchDiscoverySection
 ## Package Contents
 
@@ -333,6 +451,8 @@ $switchDiscoverySection
 | ``detection.ps1`` | Registry-based version detection |
 | ``app.json`` | AppGetter metadata export |
 | ``win32LobApp.json`` | Microsoft Graph ``win32LobApp`` definition |
+| ``licensing.json`` | Resolved licensing pattern and activation plan (when a licensing field was supplied) |
+| ``license\`` | License file shipped with the package (when the pattern needs one) |
 | ``README.md`` | This documentation file |
 | ``icon.png`` | Application icon for Intune upload (if available) |
 | ``sandbox-test-report.txt`` | Chat-ready Windows Sandbox test log (created after Test in Sandbox) |
@@ -389,7 +509,8 @@ function New-AppGetterMetadataFiles {
         [string]$UninstallScript,
         [string]$IconFilePath,
         [string]$FinalDownloadUrl,
-        [pscustomobject]$SwitchDiscoveryResult
+        [pscustomobject]$SwitchDiscoveryResult,
+        [pscustomobject]$Licensing
     )
 
     $uninstallCommandLine = Get-IntuneUninstallCommandLine
@@ -412,8 +533,13 @@ function New-AppGetterMetadataFiles {
         -InstallerHash $InstallerHash -IntuneWinFileName $intuneWinFileName `
         -InstallerInstallCommand $InstallerInstallCommand -UninstallCommandLine $uninstallCommandLine `
         -FinalDownloadUrl $FinalDownloadUrl -DetectionType 'PowerShell script (registry-based version check)' `
-        -HasIcon $hasIcon -SwitchDiscoveryResult $SwitchDiscoveryResult
+        -HasIcon $hasIcon -SwitchDiscoveryResult $SwitchDiscoveryResult -Licensing $Licensing
     $readme | Set-Content -Path $readmePath -Encoding UTF8
+
+    $legacyLicensingLine = ''
+    if ($Licensing -and $Licensing.Classified) {
+        $legacyLicensingLine = "Licensing: $($Licensing.LicenseType) - activation $($Licensing.ActivationMethod), assign as $($Licensing.AssignmentRecommendation)`n"
+    }
 
     $legacyReadme = @"
 Package $($PackageDetails.PackageId) $($PackageDetails.Version) from Web Download
@@ -423,6 +549,7 @@ Version: $($PackageDetails.Version)
 Publisher: $($PackageDetails.Publisher)
 Website: $($PackageDetails.Homepage)
 Download URL: $FinalDownloadUrl
+$legacyLicensingLine
 
 Install command (Intune):
 $installCommandLine
@@ -453,6 +580,48 @@ See README.md for full Intune upload reference.
         installerContext     = 2
         architecture         = 2
     }
+
+    # Packages built without a licensing field stay byte-identical to earlier releases.
+    if ($Licensing -and $Licensing.Classified) {
+        $licensingMetadata = [ordered]@{
+            patternId               = $Licensing.PatternId
+            patternName             = $Licensing.PatternName
+            licenseType             = $Licensing.LicenseType
+            activationMethod        = $Licensing.ActivationMethod
+            requiresActivation      = [bool]$Licensing.RequiresActivation
+            confidenceScore         = $Licensing.ConfidenceScore
+            needsManualReview       = [bool]$Licensing.NeedsManualReview
+            classified              = [bool]$Licensing.Classified
+            assignmentRecommendation = $Licensing.AssignmentRecommendation
+            requiresApproval        = [bool]$Licensing.RequiresApproval
+            licenseQuantity         = $Licensing.LicenseQuantity
+            licenseExpiry           = $Licensing.LicenseExpiry
+            hasLicenseKey           = [bool]$Licensing.HasLicenseKey
+            licenseKeyMasked        = $Licensing.LicenseKeyMasked
+            licenseKeyProperty      = $Licensing.LicenseKeyPropertyName
+            appliedToInstallCommand = [bool]$Licensing.AppliedToInstallCommand
+            licenseServer           = $Licensing.LicenseServer
+            licenseServerVariable   = $Licensing.LicenseServerVariable
+            licenseFile             = $Licensing.PackagedLicenseFile
+            licenseFileTargetPath   = $Licensing.LicenseFileTargetPath
+            missingArtifacts        = @($Licensing.MissingArtifacts)
+            complianceNotes         = @($Licensing.ComplianceNotes)
+            evidenceSummary         = @($Licensing.EvidenceSummary)
+            guidance                = $Licensing.Guidance
+            # The raw ServiceNow text is stored with any parsed key masked out.
+            licenseInfo             = $Licensing.RedactedLicenseInfo
+        }
+        $appJson.licensing = $licensingMetadata
+
+        $licensingManifest = [ordered]@{}
+        foreach ($key in $licensingMetadata.Keys) {
+            $licensingManifest[$key] = $licensingMetadata[$key]
+        }
+        $licensingManifest.generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+        $licensingManifest | ConvertTo-Json -Depth 8 |
+            Set-Content -Path (Join-Path $VersionDirectory 'licensing.json') -Encoding UTF8
+    }
+
     if ($SwitchDiscoveryResult) {
         $appJson.switchDiscovery = @{
             installerFamily     = $SwitchDiscoveryResult.InstallerFamily
@@ -507,6 +676,11 @@ See README.md for full Intune upload reference.
         }
     }
 
+    $licensingNote = ''
+    if ($Licensing -and $Licensing.Classified) {
+        $licensingNote = " | Licensing: $($Licensing.LicenseType), activation $($Licensing.ActivationMethod), assign as $($Licensing.AssignmentRecommendation)"
+    }
+
     $win32LobAppJson = @{
         '@odata.type'                       = '#microsoft.graph.win32LobApp'
         description                         = $PackageDetails.Description
@@ -514,7 +688,7 @@ See README.md for full Intune upload reference.
         displayName                         = $PackageDetails.DisplayName
         informationUrl                      = $PackageDetails.Homepage
         largeIcon                           = if ($iconBase64) { @{ type = $iconMimeType; value = $iconBase64 } } else { $null }
-        notes                               = "Generated by AppGetter at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [Web|$($PackageDetails.PackageId)]"
+        notes                               = "Generated by AppGetter at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [Web|$($PackageDetails.PackageId)]$licensingNote"
         publisher                           = $PackageDetails.Publisher
         fileName                            = $intuneWinFileName
         allowAvailableUninstall             = $true
@@ -559,6 +733,7 @@ See README.md for full Intune upload reference.
         ReadmePath          = $readmePath
         AppJsonPath         = $appJsonPath
         Win32LobAppJsonPath = $win32Path
+        LicensingPath       = if ($Licensing -and $Licensing.Classified) { (Join-Path $VersionDirectory 'licensing.json') } else { $null }
         IntuneWinFileName   = $intuneWinFileName
         InstallCommandLine  = $installCommandLine
         UninstallCommandLine = $uninstallCommandLine
