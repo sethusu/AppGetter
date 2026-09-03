@@ -10,6 +10,7 @@ function Invoke-AppGetterPackaging {
         [string]$SupportUrl,
         [string]$Version,
         [string]$Publisher,
+        [string]$LicenseInfo,
         [string]$OutputPath = (Get-AppGetterSettings).OutputPath,
         [string]$IconPath,
         [string]$InstallCommand,
@@ -29,6 +30,15 @@ function Invoke-AppGetterPackaging {
 
         $details = Get-WebPackageDetails -AppName $AppName -WebsiteUrl $WebsiteUrl -DownloadUrl $DownloadUrl `
             -DeveloperUrl $DeveloperUrl -SupportUrl $SupportUrl -Version $Version -Publisher $Publisher
+
+        $licensePattern = Resolve-AppGetterLicensePattern -LicenseInfo $LicenseInfo -AppName $AppName `
+            -Publisher $Publisher -Description $details.Description
+        $details | Add-Member -NotePropertyName License -NotePropertyValue $licensePattern -Force
+        $details | Add-Member -NotePropertyName LicenseInfo -NotePropertyValue $LicenseInfo -Force
+
+        $licenseReview = if ($licensePattern.NeedsManualReview) { ' (manual review recommended)' } else { '' }
+        Write-AppGetterLog -Message "Licensing pattern: $($licensePattern.DisplayName) [$($licensePattern.Pattern)], source=$($licensePattern.Source), confidence=$($licensePattern.ConfidenceScore), context=$($licensePattern.InstallContext)$licenseReview" `
+            -Level $(if ($licensePattern.NeedsManualReview) { 'Warning' } else { 'Success' }) -OnProgress $OnProgress
 
         if (-not [string]::IsNullOrWhiteSpace($InstallerPath) -and $details.Description -like '*Downloaded from web') {
             $details.Description = $details.Description -replace 'Downloaded from web$', 'Packaged from local installer'
@@ -142,7 +152,7 @@ function Invoke-AppGetterPackaging {
 
         Write-AppGetterProgress -Step 7 -TotalSteps $totalSteps -StepName 'Generating install.ps1' -Percent 48 -OnProgress $OnProgress
         $installScript = New-AppGetterInstallScript -PackageId $details.PackageId -DisplayName $details.DisplayName `
-            -Version $details.Version -InstallCommand $installerInstallCommand
+            -Version $details.Version -InstallCommand $installerInstallCommand -LicensePattern $licensePattern
 
         Write-AppGetterProgress -Step 8 -TotalSteps $totalSteps -StepName 'Generating detection.ps1' -Percent 58 -OnProgress $OnProgress
         $detectionScript = New-AppGetterDetectionScript -PackageId $details.PackageId -DisplayName $details.DisplayName `
@@ -163,7 +173,8 @@ function Invoke-AppGetterPackaging {
             -InstallerFileName $installerFile.Name -InstallerHash $installerHash `
             -InstallerInstallCommand $installerInstallCommand -DetectionScript $detectionScript `
             -InstallScript $installScript -UninstallScript $uninstallScript -IconFilePath $iconFilePath `
-            -FinalDownloadUrl $finalDownloadUrl -SwitchDiscoveryResult $switchDiscoveryResult
+            -FinalDownloadUrl $finalDownloadUrl -SwitchDiscoveryResult $switchDiscoveryResult `
+            -LicensePattern $licensePattern
 
         Write-AppGetterProgress -Step 12 -TotalSteps $totalSteps -StepName 'Packaging .intunewin' -Percent 90 -OnProgress $OnProgress
         $contentPrepPath = Resolve-ContentPrepToolPath
@@ -201,7 +212,7 @@ function Invoke-AppGetterPackaging {
 
         Save-AppGetterSettings -OutputPath $OutputPath -LastAppName $AppName `
             -LastWebsiteUrl $WebsiteUrl -LastDownloadUrl $DownloadUrl `
-            -LastInstallerPath $InstallerPath -PackageId $details.PackageId
+            -LastInstallerPath $InstallerPath -LastLicenseInfo $LicenseInfo -PackageId $details.PackageId
 
         return [PSCustomObject]@{
             Success              = $true
@@ -210,6 +221,7 @@ function Invoke-AppGetterPackaging {
             DisplayName          = $details.DisplayName
             Version              = $details.Version
             Publisher            = $details.Publisher
+            License              = $licensePattern
             VersionDirectory     = $versionDirectory
             IntuneWinFile        = if ($packagingSucceeded) { $intunewinFile } else { $null }
             IconFile             = if ($hasIcon -and (Test-Path $iconFilePath)) { $iconFilePath } else { $null }

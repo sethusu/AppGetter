@@ -64,6 +64,7 @@ function Get-AppGetterSettings {
         LastWebsiteUrl    = ''
         LastDownloadUrl   = ''
         LastInstallerPath = ''
+        LastLicenseInfo   = ''
     }
 
     if (Test-Path $settingsPath) {
@@ -97,6 +98,7 @@ function Save-AppGetterSettings {
         [string]$LastWebsiteUrl,
         [string]$LastDownloadUrl,
         [string]$LastInstallerPath,
+        [string]$LastLicenseInfo,
         [string]$PackageId
     )
 
@@ -123,6 +125,9 @@ function Save-AppGetterSettings {
     }
     if ($PSBoundParameters.ContainsKey('LastInstallerPath')) {
         $current.LastInstallerPath = $LastInstallerPath
+    }
+    if ($PSBoundParameters.ContainsKey('LastLicenseInfo')) {
+        $current.LastLicenseInfo = $LastLicenseInfo
     }
 
     $current | ConvertTo-Json | Set-Content -Path $settingsPath -Encoding UTF8

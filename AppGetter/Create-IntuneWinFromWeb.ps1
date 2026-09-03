@@ -16,6 +16,10 @@
     Optional. Specific version to use.
 .PARAMETER Publisher
     Optional. Publisher name.
+.PARAMETER LicenseInfo
+    Optional. ServiceNow license metric/type (for example Per Device, Per User, Freeware,
+    Subscription). AppGetter identifies the licensing pattern and applies it to install
+    context, assignment notes, and license-key handling.
 .PARAMETER DeveloperUrl
     Optional. Developer or publisher website URL.
 .PARAMETER SupportUrl
@@ -40,6 +44,8 @@
 .EXAMPLE
     .\Create-IntuneWinFromWeb.ps1 -InstallerPath "C:\Installers\setup.exe" -AppName "MyApp"
 .EXAMPLE
+    .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/setup.exe" -AppName "MyApp" -LicenseInfo "Per Device"
+.EXAMPLE
     .\Create-IntuneWinFromWeb.ps1 -UseGui
 #>
 
@@ -62,6 +68,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$Publisher,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicenseInfo,
 
     [Parameter(Mandatory = $false)]
     [string]$DeveloperUrl,
@@ -223,6 +232,7 @@ try {
         SupportUrl    = $SupportUrl
         Version       = $Version
         Publisher     = $Publisher
+        LicenseInfo   = $LicenseInfo
         OutputPath    = $OutputPath
         IconPath      = $IconPath
         InstallCommand = $InstallCommand
@@ -247,6 +257,7 @@ Package Details:
 - Package ID: $($result.PackageId)
 - Version: $($result.Version)
 - Publisher: $($result.Publisher)
+- License: $(if ($result.License) { "$($result.License.DisplayName) [$($result.License.Pattern)]" } else { 'Unknown' })
 - Installer Source: $($result.FinalDownloadUrl)
 - Output Directory: $($result.VersionDirectory)
 - IntuneWin Package: $intuneWinLine
@@ -258,6 +269,7 @@ Files Created:
 - README.md
 - readme.txt
 - app.json
+- license.json
 - win32LobApp.json
 - icon.png (if available)
 - appgetter-packaging.log (on failure)

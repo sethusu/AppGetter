@@ -2,6 +2,12 @@
 
 ## Version 2.3.0 - Unreleased
 
+### ServiceNow licensing patterns
+- Added **License info** (CLI `-LicenseInfo`, GUI combo) for the ServiceNow license metric/type ingested before packaging
+- `Resolve-AppGetterLicensePattern` maps that field (or infers from app metadata) to a canonical pattern — Freeware, Open Source, Per Device, Per User, Concurrent User, Subscription, Volume, Site, Enterprise, and others
+- Applied to the package: `installExperience.runAsAccount` (user vs system), README assignment guidance, `app.json` / `license.json`, Intune notes, and optional `APPGETTER_LICENSE_KEY` injection in `install.ps1` when the pattern requires a key
+- Pester coverage: `Tests/LicenseDiscovery.Tests.ps1`
+
 ### Silent switch Sandbox research
 - Added Windows Sandbox **candidate trials** during discovery (`Test-InstallerCommandInSandbox`) that prove silence (no installer UI), accepted exit codes, and new ARP install evidence — not just post-package success
 - Packaging can force trials with `-VerifySilentSwitches` (CLI/GUI); trials also auto-run when static confidence is low/ambiguous and Sandbox is available
