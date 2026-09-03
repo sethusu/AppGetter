@@ -1,0 +1,9 @@
+{
+  "name": "AppGetter",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "user": "ubuntu",
+  "install": "./.cursor/install.sh"
+}
