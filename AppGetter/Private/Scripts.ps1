@@ -528,10 +528,18 @@ function New-AppGetterMetadataFiles {
     $UninstallScript | Set-Content -Path $uninstallScriptPath -Encoding UTF8
     $DetectionScript | Set-Content -Path $detectionScriptPath -Encoding UTF8
 
+    # README.md gets pasted into tickets and wikis, so the documented command shows the
+    # masked key even though install.ps1 has to carry the real one.
+    $documentedInstallCommand = $InstallerInstallCommand
+    if ($Licensing -and $Licensing.LicenseKey) {
+        $documentedInstallCommand = $documentedInstallCommand.Replace(
+            $Licensing.LicenseKey, $Licensing.LicenseKeyMasked)
+    }
+
     $hasIcon = (Test-Path $IconFilePath)
     $readme = New-AppGetterReadmeMarkdown -PackageDetails $PackageDetails -InstallerFileName $InstallerFileName `
         -InstallerHash $InstallerHash -IntuneWinFileName $intuneWinFileName `
-        -InstallerInstallCommand $InstallerInstallCommand -UninstallCommandLine $uninstallCommandLine `
+        -InstallerInstallCommand $documentedInstallCommand -UninstallCommandLine $uninstallCommandLine `
         -FinalDownloadUrl $FinalDownloadUrl -DetectionType 'PowerShell script (registry-based version check)' `
         -HasIcon $hasIcon -SwitchDiscoveryResult $SwitchDiscoveryResult -Licensing $Licensing
     $readme | Set-Content -Path $readmePath -Encoding UTF8

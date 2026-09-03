@@ -793,7 +793,7 @@ Update-OutputPathForApp
 
 $script:autoDetectLicenseTypeLabel = 'Auto-detect from licensing field'
 
-function Initialize-LicenseTypeChoices {
+function Initialize-LicenseTypeList {
     if (-not $licenseTypeCombo) { return }
     $licenseTypeCombo.Items.Clear()
     $licenseTypeCombo.Items.Add($script:autoDetectLicenseTypeLabel) | Out-Null
@@ -867,7 +867,7 @@ function Update-LicensingPreview {
     }
 }
 
-Initialize-LicenseTypeChoices
+Initialize-LicenseTypeList
 Update-LicensingPreview
 
 function Update-PrereqStatusDisplay {

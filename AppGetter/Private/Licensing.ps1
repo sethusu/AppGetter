@@ -307,7 +307,9 @@ function Resolve-AppGetterLicenseTypeToPatternId {
         return $null
     }
 
-    $value = ($LicenseType -replace '[\s_/]+', '-').Trim('-').ToLowerInvariant()
+    # Slugify the same way the catalog labels are slugified so 'Per device (perpetual)'
+    # matches the 'Per device (perpetual)' license type.
+    $value = ($LicenseType -replace '[^A-Za-z0-9]+', '-').Trim('-').ToLowerInvariant()
     $catalog = Get-AppGetterLicensingPatternCatalog
 
     foreach ($pattern in $catalog) {
@@ -443,9 +445,11 @@ function Get-AppGetterLicenseDetailsFromText {
         $evidence.Add("License file named in the licensing field: $($details.LicenseFileName)") | Out-Null
     }
 
+    # Allow a few words between the verb and the destination, so both
+    # "copy license.dat to <path>" and "place the license file in <path>" match.
     $targetMatch = [regex]::Match(
         $normalized,
-        '(?i)(?:copy|place|install|put|deploy|store)\s+(?:the\s+)?(?:licen[cs]e\s+)?(?:file\s+)?(?:to|in|into|at|under)\s+"?((?:[A-Za-z]:\\|%[^%]+%\\|\\\\)[^\s";,]+)"?'
+        '(?i)\b(?:copy|place|install|put|deploy|store|save)\s+(?:\S+\s+){0,4}?(?:to|in|into|at|under)\s+"?((?:[A-Za-z]:\\|%[^%]+%\\|\\\\)[^\s";,]+)"?'
     )
     if ($targetMatch.Success) {
         $details.LicenseFileTargetPath = $targetMatch.Groups[1].Value.TrimEnd('.', ',', ';')
@@ -645,6 +649,22 @@ function Get-AppGetterLicensingPattern {
 
     # Catalog order breaks score ties so the same field always yields the same pattern.
     $ranked = @($scored | Sort-Object -Property @{ Expression = 'Score'; Descending = $true }, @{ Expression = 'Order'; Descending = $false })
+
+    # An explicit license type is authoritative: the operator is overriding the text.
+    if ($forcedPatternId) {
+        $forced = $ranked | Where-Object { $_.Pattern.Id -eq $forcedPatternId } | Select-Object -First 1
+        if ($forced) {
+            return [PSCustomObject]@{
+                Pattern         = $forced.Pattern
+                Score           = [Math]::Max(80, [int]$forced.Score)
+                MatchedMarkers  = @($forced.MatchedMarkers)
+                InstallerBoost  = $forced.InstallerBoost
+                Ranked          = $ranked
+                ForcedPatternId = $forcedPatternId
+            }
+        }
+    }
+
     $best = $ranked[0]
 
     if ($best.Score -le 0) {

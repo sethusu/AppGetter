@@ -5,7 +5,8 @@
 `AppGetter/` is a standalone PowerShell tool that mirrors the [WinGetter](https://github.com/sethusu/WinGetter)
 (Wingetter) architecture. It downloads a Windows application installer from the web and generates a Microsoft
 Intune Win32 LOB (`.intunewin`) package plus its metadata (`install.ps1`, `detection.ps1`, `uninstall.ps1`,
-`README.md`, `app.json`, `win32LobApp.json`, `readme.txt`). See `AppGetter/README.md` for full usage.
+`README.md`, `app.json`, `win32LobApp.json`, `readme.txt`, `silent-switches.json`, `licensing.json`).
+See `AppGetter/README.md` for full usage.
 
 There is no build system, package manager, lockfile, or service — it is a PowerShell module + CLI/GUI tool.
 The end user is expected to have the Microsoft Win32 Content Prep Tool (`intunewinapputil`) installed.
@@ -34,6 +35,11 @@ Non-obvious caveats when running on Linux:
 - **Test in Sandbox** is Windows-only (Windows Sandbox / `Containers-DisposableClientVM`). On Linux,
   `Test-AppGetterWindowsSandbox` reports unsupported; host-side helpers and Pester tests under
   `AppGetter/Tests/Sandbox.Tests.ps1` still run.
+- **Licensing pattern discovery** (`Private/Licensing.ps1`, `-LicenseInfo`) is fully Linux-safe:
+ classification, installer license evidence, key/server/file extraction, and install.ps1 licensing
+ stage generation all run without Windows. Pass `-LicenseInfo` (and optionally `-LicenseType`,
+ `-LicenseKey`, `-LicenseServer`, `-LicenseFilePath`) to exercise it, then inspect the generated
+ `licensing.json`, `install.ps1`, and the Licensing section of `README.md`.
 - **Silent-switch Sandbox research trials** (`Test-InstallerCommandInSandbox`, `-VerifySilentSwitches`)
   are also Windows-only. On Linux, static fingerprinting/ranking still runs and packages are marked
   `verified=false`; candidate trials and ARP/UI evidence collection are skipped.
@@ -50,5 +56,7 @@ Non-obvious caveats when running on Linux:
 
 Automated tests (optional): `pwsh -NoProfile -File AppGetter/Run-Tests.ps1`
 Static silent-switch corpus: `AppGetter/Tests/SwitchDiscovery.Tests.ps1` (Linux-safe).
+Licensing patterns and application: `AppGetter/Tests/Licensing.Tests.ps1` (Linux-safe; generates its
+own synthetic installer fixtures and packages end-to-end into a temp folder).
 Validate packaging changes by running the script end-to-end against a real direct download URL
 and inspecting the generated files.
