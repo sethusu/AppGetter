@@ -20,6 +20,9 @@
     Optional. Developer or publisher website URL.
 .PARAMETER SupportUrl
     Optional. Support or documentation page URL.
+.PARAMETER LicensingInfo
+    Optional. Licensing details from intake/source records (for example ServiceNow).
+    AppGetter classifies this into a licensing pattern and stores it in app.json.
 .PARAMETER OutputPath
     Optional. Base output path. Defaults to saved AppGetter settings path.
 .PARAMETER IconPath
@@ -73,6 +76,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$SupportUrl,
+
+    [Parameter(Mandatory = $false)]
+    [string]$LicensingInfo,
 
     [Parameter(Mandatory = $false)]
     [string]$OutputPath,
@@ -229,6 +235,7 @@ try {
         InstallerPath = $InstallerPath
         DeveloperUrl  = $DeveloperUrl
         SupportUrl    = $SupportUrl
+        LicensingInfo = $LicensingInfo
         Version       = $Version
         Publisher     = $Publisher
         OutputPath    = $OutputPath

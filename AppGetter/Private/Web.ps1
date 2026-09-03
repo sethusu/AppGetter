@@ -194,6 +194,116 @@ function Get-DetectedSilentSwitch {
     return $null
 }
 
+function Resolve-AppGetterLicensingPattern {
+    param(
+        [string]$InputText,
+        [string]$Source = 'Unknown',
+        [string[]]$Evidence = @(),
+        [string[]]$SourceUrls = @()
+    )
+
+    $normalized = if ([string]::IsNullOrWhiteSpace($InputText)) {
+        ''
+    } else {
+        (($InputText -replace '<[^>]+>', ' ') -replace '\s+', ' ').Trim()
+    }
+
+    $pattern = 'Unknown'
+    $confidence = 0
+    $detectionNote = 'No licensing signal was detected.'
+    $evidenceSummary = @($Evidence)
+
+    if ($normalized) {
+        $rules = @(
+            @{ Pattern = 'OpenSource'; Confidence = 95; Regex = '(?i)\b(open[\s-]?source|gpl(?:v?\d+)?|mit license|apache license|bsd license|mozilla public license|mpl\b|lgpl\b)\b'; Note = 'Open-source licensing keywords were found.' },
+            @{ Pattern = 'Trialware'; Confidence = 88; Regex = '(?i)\b(trial|evaluation|eval version|14-day|30-day|60-day|expires)\b'; Note = 'Trial or evaluation licensing keywords were found.' },
+            @{ Pattern = 'SeatBased'; Confidence = 82; Regex = '(?i)\b(named user|per user|per-device|per device|seat|concurrent user|floating license|license server)\b'; Note = 'Seat/user/device licensing keywords were found.' },
+            @{ Pattern = 'Subscription'; Confidence = 84; Regex = '(?i)\b(subscription|monthly|annual|yearly|saas)\b'; Note = 'Subscription licensing keywords were found.' },
+            @{ Pattern = 'Perpetual'; Confidence = 80; Regex = '(?i)\b(perpetual|lifetime|one-time purchase|one time purchase)\b'; Note = 'Perpetual licensing keywords were found.' },
+            @{ Pattern = 'Freeware'; Confidence = 78; Regex = '(?i)\b(freeware|free to use|free edition)\b'; Note = 'Free-use licensing keywords were found.' }
+        )
+
+        foreach ($rule in $rules) {
+            if ($normalized -match $rule.Regex) {
+                $pattern = $rule.Pattern
+                $confidence = $rule.Confidence
+                $detectionNote = $rule.Note
+                break
+            }
+        }
+
+        if ($pattern -eq 'Unknown') {
+            if ($normalized -match '(?i)^\s*(n/?a|unknown|tbd|not provided)\s*$') {
+                $detectionNote = 'Licensing info was explicitly unknown in the source input.'
+                $confidence = 100
+            } elseif ($Source -eq 'UserProvided') {
+                $pattern = 'Custom'
+                $confidence = 65
+                $detectionNote = 'User-provided licensing text did not map to a known pattern, so it was preserved as custom.'
+            }
+        }
+    }
+
+    if ($evidenceSummary.Count -eq 0 -and $normalized) {
+        $previewLength = [Math]::Min(160, $normalized.Length)
+        $evidenceSummary = @("Input preview: $($normalized.Substring(0, $previewLength))")
+    }
+
+    return [PSCustomObject]@{
+        Pattern        = $pattern
+        Source         = $Source
+        ConfidenceScore = $confidence
+        Notes          = if ($normalized) { $normalized } else { '' }
+        DetectionNote  = $detectionNote
+        EvidenceSummary = $evidenceSummary
+        SourceUrls     = @($SourceUrls)
+    }
+}
+
+function Get-WebLicensingSignals {
+    param(
+        [string[]]$Urls
+    )
+
+    $uniqueUrls = @()
+    foreach ($url in $Urls) {
+        if (-not [string]::IsNullOrWhiteSpace($url) -and $url -notin $uniqueUrls) {
+            $uniqueUrls += $url
+        }
+    }
+
+    $combinedTextParts = @()
+    $evidence = @()
+    $snippetPattern = '(?i).{0,80}\b(license|licensing|subscription|trial|evaluation|open source|perpetual|seat|named user|concurrent|floating)\b.{0,80}'
+
+    foreach ($url in $uniqueUrls) {
+        try {
+            $response = Invoke-WebRequest -Uri $url -UseBasicParsing -ErrorAction Stop
+            $text = (($response.Content -replace '<[^>]+>', ' ') -replace '\s+', ' ').Trim()
+            if (-not [string]::IsNullOrWhiteSpace($text)) {
+                $combinedTextParts += $text
+            }
+
+            $matches = [regex]::Matches($text, $snippetPattern)
+            foreach ($match in $matches) {
+                if ($evidence.Count -ge 5) { break }
+                $snippet = $match.Value.Trim()
+                if ($snippet -and $snippet -notin $evidence) {
+                    $evidence += ("{0} :: {1}" -f $url, $snippet)
+                }
+            }
+        } catch {
+            Write-AppGetterLog -Message "Could not scan page for licensing keywords: $url" -Level Warning
+        }
+    }
+
+    return [PSCustomObject]@{
+        CombinedText = ($combinedTextParts -join ' ')
+        Evidence     = $evidence
+        UrlsChecked  = $uniqueUrls
+    }
+}
+
 function Start-WebInstallerDownload {
     param(
         [Parameter(Mandatory = $true)]
@@ -267,13 +377,15 @@ function Get-WebPackageDetails {
         [string]$DeveloperUrl,
         [string]$SupportUrl,
         [string]$Version,
-        [string]$Publisher
+        [string]$Publisher,
+        [string]$LicensingInfo
     )
 
     $packageId = Get-PackageIdFromAppName -AppName $AppName
     $foundVersion = $Version
     $foundDescription = $null
     $installSwitchesInfo = $null
+    $resolvedLicensing = $null
 
     $urlsToCheck = @()
     if ($WebsiteUrl) { $urlsToCheck += $WebsiteUrl }
@@ -300,6 +412,14 @@ function Get-WebPackageDetails {
         $installSwitchesInfo = Get-WebInstallSwitches -Url $SupportUrl -AppName $AppName
     }
 
+    if (-not [string]::IsNullOrWhiteSpace($LicensingInfo)) {
+        $resolvedLicensing = Resolve-AppGetterLicensingPattern -InputText $LicensingInfo -Source 'UserProvided'
+    } else {
+        $licensingSignals = Get-WebLicensingSignals -Urls @($WebsiteUrl, $DeveloperUrl, $SupportUrl)
+        $resolvedLicensing = Resolve-AppGetterLicensingPattern -InputText $licensingSignals.CombinedText `
+            -Source 'DetectedFromWeb' -Evidence $licensingSignals.Evidence -SourceUrls $licensingSignals.UrlsChecked
+    }
+
     if ([string]::IsNullOrWhiteSpace($foundDescription)) {
         $foundDescription = if ($Publisher) {
             "$AppName by $Publisher - Downloaded from web"
@@ -321,5 +441,6 @@ function Get-WebPackageDetails {
         SupportUrl           = $SupportUrl
         Homepage             = if ($WebsiteUrl) { $WebsiteUrl } elseif ($DeveloperUrl) { $DeveloperUrl } else { '' }
         InstallSwitchesInfo  = $installSwitchesInfo
+        Licensing            = $resolvedLicensing
     }
 }

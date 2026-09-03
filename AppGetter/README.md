@@ -114,6 +114,10 @@ cd AppGetter
 # Package from a direct download URL
 .\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/installer.exe" -AppName "MyApp" -Version "1.0.0"
 
+# Package with intake licensing context (for pattern classification)
+.\Create-IntuneWinFromWeb.ps1 -DownloadUrl "https://example.com/installer.exe" -AppName "MyApp" `
+    -LicensingInfo "Named user annual subscription"
+
 # Package an installer already on this computer
 .\Create-IntuneWinFromWeb.ps1 -InstallerPath "C:\Installers\setup.exe" -AppName "MyApp" -Version "1.0.0"
 
@@ -177,6 +181,7 @@ Default output path and last-used settings are saved to:
 | **Publisher** | Publisher name |
 | **DeveloperUrl** | Optional developer site for logo/description lookup |
 | **SupportUrl** | Optional docs page for silent install switch discovery |
+| **LicensingInfo** | Optional intake licensing text (for example from ServiceNow); AppGetter classifies and stores a licensing pattern |
 | **OutputPath** | Base output directory |
 | **IconPath** | Custom PNG icon |
 | **InstallCommand** | Custom install command (auto-detected if omitted) |

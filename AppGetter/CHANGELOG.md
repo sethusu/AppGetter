@@ -15,6 +15,12 @@
 - Pester coverage: `Tests/SwitchDiscovery.Tests.ps1` (Linux-safe corpus) and `-Tag SandboxLive` for live trial hosts
 - **Restore missing installer for Sandbox**: when a package folder is pulled/copied without the `.msi`/`.exe`, `Restore-AppGetterPackageInstaller` re-downloads from `app.json` `installerUrl` (used by Test in Sandbox / trial sessions). `Get-AppGetterLiveTestInstaller` caches a real 7-Zip MSI for SandboxLive tests
 
+### Licensing metadata
+- Added optional `-LicensingInfo` intake input (CLI + GUI) so packaging runs can ingest licensing text from source systems such as ServiceNow
+- Added licensing pattern classification (`OpenSource`, `Trialware`, `SeatBased`, `Subscription`, `Perpetual`, `Freeware`, `Custom`, `Unknown`) based on intake text and web signals
+- Writes licensing metadata into `app.json` and includes licensing fields in package `README.md`; `win32LobApp.json` notes now include the detected licensing pattern/source
+- Added Pester coverage under `Tests/Licensing.Tests.ps1` for intake-driven and web-driven classification
+
 ## Version 2.2.0 - 2026-08-20
 
 ### Test in Sandbox

@@ -316,7 +316,7 @@ function Start-AppGetterBackgroundPackaging {
             OutputPath = $PackArguments.OutputPath
             OnProgress = $onProgress
         }
-        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'Version', 'Publisher', 'IconPath', 'InstallerArguments')) {
+        foreach ($key in @('WebsiteUrl', 'DownloadUrl', 'InstallerPath', 'DeveloperUrl', 'SupportUrl', 'LicensingInfo', 'Version', 'Publisher', 'IconPath', 'InstallerArguments')) {
             if ($PackArguments[$key]) { $params[$key] = $PackArguments[$key] }
         }
         if ($PackArguments.ContainsKey('VerifySilentSwitches') -and $PackArguments.VerifySilentSwitches) {
@@ -729,6 +729,7 @@ $installerPathBox = $window.FindName('InstallerPathBox')
 $browseInstallerButton = $window.FindName('BrowseInstallerButton')
 $developerUrlBox = $window.FindName('DeveloperUrlBox')
 $supportUrlBox = $window.FindName('SupportUrlBox')
+$licensingInfoBox = $window.FindName('LicensingInfoBox')
 $versionBox = $window.FindName('VersionBox')
 $installArgumentsBox = $window.FindName('InstallArgumentsBox')
 $outputPathBox = $window.FindName('OutputPathBox')
@@ -990,6 +991,7 @@ function Set-PackControlsEnabled {
     $browseInstallerButton.IsEnabled = $Enabled
     $developerUrlBox.IsEnabled = $Enabled
     $supportUrlBox.IsEnabled = $Enabled
+    $licensingInfoBox.IsEnabled = $Enabled
     $versionBox.IsEnabled = $Enabled
     $installArgumentsBox.IsEnabled = $Enabled
     $browseOutputButton.IsEnabled = $Enabled
@@ -1130,6 +1132,7 @@ function Start-AppGetterPackagingFromUi {
         InstallerPath = $installerPath
         DeveloperUrl  = $developerUrlBox.Text.Trim()
         SupportUrl    = $supportUrlBox.Text.Trim()
+        LicensingInfo = $licensingInfoBox.Text.Trim()
         Version       = $versionBox.Text.Trim()
         Publisher     = $publisherBox.Text.Trim()
         OutputPath    = $script:baseOutputPath
